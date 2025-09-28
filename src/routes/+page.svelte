@@ -10,7 +10,6 @@
   import Settings from '$lib/components/Settings.svelte';
   import Translator from '$lib/components/Translator.svelte';
   import History from '$lib/components/History.svelte';
-  // import { EnhancedImg, srcset } from '@sveltejs/enhanced-img';
 
   let searchQuery = '';
 
