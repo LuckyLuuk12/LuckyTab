@@ -9,6 +9,7 @@
     { id: 'youtube', title: 'YouTube', url: 'https://youtube.com', custom_favicon: 'https://cdn-icons-png.flaticon.com/512/1384/1384060.png' },
     { id: 'github', title: 'Github', url: 'https://github.com', custom_favicon: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/ae/Github-desktop-logo-symbol.svg/2048px-Github-desktop-logo-symbol.svg.png' },
     { id: 'chatgpt', title: 'ChatGPT', url: 'https://chat.openai.com', custom_favicon: 'https://chat.openai.com/favicon.ico' },
+    { id: 'rooster', title: 'Persoonlijk Rooster', url: 'https://persoonlijkrooster.ru.nl/schedule', custom_favicon: 'https://persoonlijkrooster.ru.nl/style/icons/favicon-7765a9a12ec3d4bc5e504c96f83c1008.ico' },
     { id: 'converter', title: 'Converter', url: 'https://online-convert.com', custom_favicon: 'https://online-convert.com/favicon.ico' },
     { id: 'overleaf', title: 'Overleaf', url: 'https://overleaf.com', custom_favicon: 'https://overleaf.com/favicon.ico' },
     { id: 'kablan', title: 'Kablan.nl', url: 'https://kablan.nl', custom_favicon: 'https://w7.pngwing.com/pngs/882/529/png-transparent-mobile-app-development-computer-icons-software-development-software-developer-others-miscellaneous-mobile-app-development-rim-thumbnail.png' },
