@@ -120,7 +120,8 @@
   }
   .translator { display:flex; flex-direction:column; gap:.5rem; height: 100%; }
   .translator-row { display:flex; gap:.5rem; align-items:center; }
-  textarea { width:100%; box-sizing:border-box; }
+  textarea { width:100%; box-sizing:border-box; background: var(--card); }
+  select { background: var(--card); }
   .grow { flex:1; }
   /* Limit how far the textarea can be resized so it doesn't escape the sidebar */
   .translator-input, .translator-output {

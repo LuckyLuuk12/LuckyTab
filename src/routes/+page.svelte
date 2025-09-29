@@ -108,8 +108,11 @@
 </main>
 
 <style>
+  :global(*:not(.fa)) {
+    font-family: Arial, Helvetica, sans-serif !important;
+  }
   :global(*) {
-    font-family: "Open sans, Tahoma, Geneva, sans-serif";
+    /* Change font to something smooth */
     --quaternary: #e1475a; /* equal to quaternary-500 */
     --quaternary-50: #fce4e8;
     --quaternary-100: #f8d7da;
