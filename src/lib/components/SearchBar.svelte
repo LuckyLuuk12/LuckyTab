@@ -164,7 +164,7 @@
 
     <div class="input-with-icon">
       <i class="fa fa-search search-icon" aria-hidden="true"></i>
-      <input bind:this={inputEl} bind:value={$query} type="text" placeholder="Search..." on:input={handleInput} on:keydown|preventDefault={handleKeydown} />
+      <input bind:this={inputEl} bind:value={$query} type="text" placeholder="Search..." on:input={handleInput} on:keydown={handleKeydown} />
     </div>
 
     <button type="submit" class="primary hollow search-submit" aria-label="Search"> 
