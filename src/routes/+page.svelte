@@ -10,6 +10,7 @@
   import Settings from '$lib/components/Settings.svelte';
   import Translator from '$lib/components/Translator.svelte';
   import History from '$lib/components/History.svelte';
+  import favicon from '$lib/assets/favicon.png';
 
   let searchQuery = '';
 
@@ -70,7 +71,7 @@
 <svelte:head>
   <title>New Tab</title>
   <meta name="description" content="" />
-  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="icon" type="image/png" href={favicon} />
 </svelte:head>
 
 
