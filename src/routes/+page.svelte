@@ -31,6 +31,34 @@
   let reduceMotion = false;
   let onBattery = false;
   let _battery: any = null;
+  // Responsive sidebar state: when viewport < 1700px the sidebars become collapsible
+  let isWide = true;
+  let leftOpen = true;
+  let rightOpen = true;
+
+  function updateWidth() {
+    if (!browser) return;
+    const w = window.innerWidth;
+    const wasWide = isWide;
+    isWide = w >= 1700;
+    if (isWide) {
+      // always show sidebars on wide screens
+      leftOpen = true;
+      rightOpen = true;
+    } else if (wasWide && !isWide) {
+      // when crossing from wide -> narrow, collapse them to avoid cramped UI
+      leftOpen = false;
+      rightOpen = false;
+    }
+  }
+
+  function toggleLeft() {
+    leftOpen = !leftOpen;
+  }
+
+  function toggleRight() {
+    rightOpen = !rightOpen;
+  }
 
   onMount(() => {
     if (browser && searchInput) {
@@ -64,6 +92,15 @@
         /* ignore */
       }
     }
+
+    // set initial width state and add resize listener
+    updateWidth();
+    const onResize = () => updateWidth();
+    window.addEventListener('resize', onResize);
+    // cleanup on destroy
+    return () => {
+      window.removeEventListener('resize', onResize);
+    };
   });
 </script>
 
@@ -87,7 +124,7 @@
 </div>
 
 <main class="page-main">
-  <aside class="sidebar left">
+  <aside id="left-sidebar" class="sidebar left" class:collapsed={!leftOpen && !isWide} aria-hidden={!leftOpen && !isWide} data-open={leftOpen}>
     <Translator />
   </aside>
 
@@ -101,9 +138,17 @@
     </div>
   </div>
 
-  <aside class="sidebar right">
+  <aside id="right-sidebar" class="sidebar right" class:collapsed={!rightOpen && !isWide} aria-hidden={!rightOpen && !isWide} data-open={rightOpen}>
     <History />
   </aside>
+
+  <!-- collapse toggles, visible only on narrow screens -->
+  <button class="sidebar-toggle left" aria-expanded={leftOpen} aria-controls="left-sidebar" on:click={toggleLeft} title="Toggle left sidebar" aria-label="Toggle left sidebar">
+    <i class="fa" aria-hidden="true" class:fa-chevron-right={!!leftOpen} class:fa-chevron-left={!leftOpen}></i>
+  </button>
+  <button class="sidebar-toggle right" aria-expanded={rightOpen} aria-controls="right-sidebar" on:click={toggleRight} title="Toggle right sidebar" aria-label="Toggle right sidebar">
+    <i class="fa" aria-hidden="true" class:fa-chevron-left={!!rightOpen} class:fa-chevron-right={!rightOpen}></i>
+  </button>
 
   <Settings />
 </main>
@@ -286,6 +331,62 @@
     border-radius: var(--border-radius, 0.5rem);
     overflow: auto;
   }
+
+  /* Collapsible behavior for narrower screens: make sidebars overlay when collapsed state is false */
+  .sidebar.collapsed { display: none; }
+
+  /* Overlay variant when narrow: absolute positioned sidebars that slide over center column */
+  @media (max-width: 1699px) {
+    .page-main { padding: 1.25rem; gap: 1rem; }
+    .sidebar {
+      position: absolute;
+      top: 1.25rem;
+      bottom: 1.25rem;
+      width: min(68vw, 360px);
+      z-index: 20;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+      transform: translateX(0);
+      transition: transform 220ms ease, opacity 200ms ease;
+      border-radius: 0.5rem;
+      background: var(--container, rgba(20,20,20,0.92));
+    }
+    .sidebar.left { left: 1.25rem; }
+    .sidebar.right { right: 1.25rem; }
+
+    /* When collapsed hide via transform or display: none (class controls it) */
+    .sidebar:not(.collapsed) { display: flex; }
+
+    /* Toggle bars: thin vertical bars centered vertically on page edges */
+    .sidebar-toggle {
+      position: fixed;
+      z-index: 30;
+      width: 14px;
+      height: 120px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.002), rgba(255,255,255,0.001));
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+      backdrop-filter: blur(6px) saturate(1.1);
+      cursor: pointer;
+      padding: 0.25rem;
+      border: 1px solid rgba(255,255,255,0.0004);
+    }
+    .sidebar-toggle.left { left: 6px; top: 50%; transform: translateY(-50%); }
+    .sidebar-toggle.right { right: 6px; top: 50%; transform: translateY(-50%); }
+    .sidebar-toggle .fa { font-size: 0.8rem; }
+    .sidebar-toggle .fa:before { display:block; }
+  }
+
+  /* On wide screens ensure sidebars are visible and static */
+  @media (min-width: 1700px) {
+    .sidebar { position: relative; display: flex !important; width: auto; box-shadow: none; }
+    .sidebar-toggle { display: none !important; }
+  }
+
+  /* Constrain central column width so pinned + search don't stretch too wide */
+  .center-column { max-width: 60vw; margin: 0 auto; }
 
   .sidebar.left { order: 0; border: 1px solid var(--dark-400); }
   .center-column { order: 1; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.5rem; }

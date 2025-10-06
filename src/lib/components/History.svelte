@@ -25,8 +25,22 @@
             <a class="history-link" href={h.url} target="_blank" rel="noopener noreferrer">
               <div class="history-row">
                 <div class="history-main">
-                  <strong class="history-type">{h.type}</strong>
-                  {#if h.query}<span class="history-query"> - {h.query}</span>{/if}
+                  <span class="history-icon" aria-hidden="true">
+                    {#if h.type === 'search'}
+                      <i class="fa fa-search"></i>
+                    {:else if h.type === 'translate'}
+                      <i class="fa fa-language"></i>
+                    {:else}
+                      <i class="fa fa-history"></i>
+                    {/if}
+                  </span>
+                  <span class="history-text">
+                    {#if h.query}
+                      {h.query}
+                    {:else}
+                      {h.url}
+                    {/if}
+                  </span>
                 </div>
                 <small class="history-time">{humanTime(h.time)}</small>
               </div>
@@ -34,8 +48,22 @@
           {:else}
             <div class="history-row no-link">
               <div class="history-main">
-                <strong class="history-type">{h.type}</strong>
-                {#if h.query}<span class="history-query"> - {h.query}</span>{/if}
+                <span class="history-icon" aria-hidden="true">
+                  {#if h.type === 'search'}
+                    <i class="fa fa-search"></i>
+                  {:else if h.type === 'translate'}
+                    <i class="fa fa-language"></i>
+                  {:else}
+                    <i class="fa fa-history"></i>
+                  {/if}
+                </span>
+                <span class="history-text">
+                  {#if h.query}
+                    {h.query}
+                  {:else}
+                    {h.type}
+                  {/if}
+                </span>
               </div>
               <small class="history-time">{humanTime(h.time)}</small>
             </div>
@@ -83,6 +111,7 @@
 
   .history-list { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:0.25rem; }
   .history-item { border-radius:0.375rem; }
+
   .history-link, .history-row.no-link {
     display: block;
     padding: 0.5rem;
@@ -94,9 +123,39 @@
   .history-link:hover {
     background: var(--card-hover, rgba(255,255,255,0.04));
   }
+
   .history-row { display:flex; justify-content:space-between; align-items:center; gap:0.5rem; }
-  .history-main { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .history-type { text-transform:uppercase; font-size: 0.6rem; }
-  .history-query { color:var(--text, #fff); opacity:0.9; margin-left:0.25rem; }
-  .history-time { color:var(--secondary-800,#999); font-size:0.8rem; margin-left:0.5rem; white-space:nowrap; }
+  .history-main { display:flex; align-items:flex-start; gap:0.5rem; flex:1; min-width:0; }
+
+  .history-icon {
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    width:1rem;
+    height:1rem;
+    flex:0 0 auto;
+    color: var(--secondary-700, #9aa);
+    opacity: 0.95;
+    font-size: 0.7rem; /* match the timestamp size */
+    margin-top: 0.06rem; /* slight vertical alignment with small text */
+  }
+  .history-icon .fa { line-height:1; }
+
+  /* show more of the search text: allow up to 2 lines and clamp */
+  .history-text {
+    display: -webkit-box;
+    line-clamp: 2;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: normal;
+    color: var(--text, #fff);
+    font-size: 0.95rem;
+    line-height: 1.2rem;
+  }
+
+  /* smaller timestamp */
+  .history-time { color:var(--secondary-800,#999); font-size: 0.7rem; margin-left:0.5rem; white-space:nowrap; }
+
 </style>

@@ -118,7 +118,7 @@
     align-items: center;
     justify-content: center;
   }
-  .translator { display:flex; flex-direction:column; gap:.5rem; height: 100%; }
+  .translator { display:flex; flex-direction:column; gap:.5rem; height: 100%; min-width: min-content; min-inline-size: min-content; }
   .translator-row { display:flex; gap:.5rem; align-items:center; }
   textarea { width:100%; box-sizing:border-box; background: var(--card); }
   select { background: var(--card); }
