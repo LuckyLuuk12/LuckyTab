@@ -28,8 +28,8 @@
   <h3>Pinned Sites</h3>
   <div class="pinned-grid">
     {#each $settings.pinned.length !== 0 ? $settings.pinned : fallbackPinnedSites as site}
-      <a class="pinned-link gradient-dark-gray" href={site.url} rel="noreferrer noopener" target="_blank">
-        <img class="pinned-img" src={site.custom_favicon ?? getFavicon(site.url)} alt="" />
+      <a class="pinned-link gradient-dark-gray" href={site.url} rel="noreferrer noopener">
+        <img class="pinned-img" src={site.custom_favicon ?? getFavicon(site.url)} alt="" loading="lazy" decoding="async" />
         <div class="pinned-title">{site.title}</div>
       </a>
     {/each}

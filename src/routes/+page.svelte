@@ -35,6 +35,11 @@
   let isWide = true;
   let leftOpen = true;
   let rightOpen = true;
+  
+  // Performance optimization: defer non-critical components
+  let showSidebars = false;
+  let showBackground = false;
+  let showSettings = false;
 
   function updateWidth() {
     if (!browser) return;
@@ -97,6 +102,22 @@
     updateWidth();
     const onResize = () => updateWidth();
     window.addEventListener('resize', onResize);
+    
+    // Performance optimization: progressive loading strategy
+    // 1. Show critical content immediately (search bar, pinned sites loaded)
+    // 2. Defer sidebars until next frame (after paint)
+    requestAnimationFrame(() => {
+      showSidebars = true;
+      // 3. Defer background layers MORE - wait for idle
+      requestIdleCallback(() => {
+        showBackground = true;
+      }, { timeout: 100 });
+      // 4. Defer settings overlay last
+      setTimeout(() => {
+        showSettings = true;
+      }, 100);
+    });
+    
     // cleanup on destroy
     return () => {
       window.removeEventListener('resize', onResize);
@@ -109,12 +130,19 @@
   <title>New Tab</title>
   <meta name="description" content="" />
   <link rel="icon" type="image/png" href={favicon} />
+  <!-- Preconnect to search providers for faster searches -->
+  <link rel="preconnect" href="https://www.google.com" crossorigin="anonymous" />
+  <link rel="dns-prefetch" href="https://www.google.com" />
+  <link rel="dns-prefetch" href="https://duckduckgo.com" />
+  <link rel="dns-prefetch" href="https://www.youtube.com" />
 </svelte:head>
 
 
 <!-- Background container: sits on top of the <body> but behind the app UI.
      Users can style layers via the ids/classes below (for example in Settings' custom CSS).
-     Each layer is pointer-events:none so it won't intercept clicks. -->
+     Each layer is pointer-events:none so it won't intercept clicks.
+     Deferred loading for performance. -->
+{#if showBackground}
 <div id="lt-bg" aria-hidden="true" class:no-anim={reduceMotion || onBattery}>
   <div class="lt-bg-layer lt-bg-layer-1"></div>
   <div class="lt-bg-layer lt-bg-layer-2"></div>
@@ -122,11 +150,14 @@
   <div class="lt-bg-layer lt-bg-layer-4"></div>
   <div class="lt-bg-layer lt-bg-layer-5"></div>
 </div>
+{/if}
 
 <main class="page-main">
+  {#if showSidebars}
   <aside id="left-sidebar" class="sidebar left" class:collapsed={!leftOpen && !isWide} aria-hidden={!leftOpen && !isWide} data-open={leftOpen}>
     <Translator />
   </aside>
+  {/if}
 
   <div class="center-column">
     <div class="pinned-wrap">
@@ -138,19 +169,25 @@
     </div>
   </div>
 
+  {#if showSidebars}
   <aside id="right-sidebar" class="sidebar right" class:collapsed={!rightOpen && !isWide} aria-hidden={!rightOpen && !isWide} data-open={rightOpen}>
     <History />
   </aside>
+  {/if}
 
   <!-- collapse toggles, visible only on narrow screens -->
+  {#if showSidebars}
   <button class="sidebar-toggle left" aria-expanded={leftOpen} aria-controls="left-sidebar" on:click={toggleLeft} title="Toggle left sidebar" aria-label="Toggle left sidebar">
     <i class="fa" aria-hidden="true" class:fa-chevron-right={!!leftOpen} class:fa-chevron-left={!leftOpen}></i>
   </button>
   <button class="sidebar-toggle right" aria-expanded={rightOpen} aria-controls="right-sidebar" on:click={toggleRight} title="Toggle right sidebar" aria-label="Toggle right sidebar">
     <i class="fa" aria-hidden="true" class:fa-chevron-left={!!rightOpen} class:fa-chevron-right={!rightOpen}></i>
   </button>
+  {/if}
 
+  {#if showSettings}
   <Settings />
+  {/if}
 </main>
 
 <style>
@@ -202,95 +239,94 @@
     width: 100%;
     height: 100%;
     pointer-events: none;
-    will-change: transform, background-position, opacity;
+    /* Force GPU compositing for cheaper animations */
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    /* Isolate layer to prevent repaints of other content */
+    isolation: isolate;
+    /* Hint browser this won't change dimensions */
+    contain: layout style paint;
   }
 
   /* Animated soft gradient (layer 1 + subtle sheen). Uses CSS variables for colors.
-     The gradient is scaled and slowly translated for a moving effect, then blurred. */
+     Optimized: use transform instead of background-position for GPU acceleration */
   .lt-bg-layer-1 {
     z-index: 1;
-    /* Prefer darker -800 variants if available; fallbacks chosen to be dark */
+    /* Static gradient - we'll animate via transform instead */
     background: linear-gradient(115deg,
       var(--primary-800, var(--primary, #07101a)) 0%,
       var(--secondary-800, var(--secondary, #08303f)) 35%,
       var(--tertiary-800, var(--tertiary, #00373a)) 65%,
       var(--quaternary-800, var(--quaternary, #050819)) 100%);
-    background-size: 200% 200%;
-    /* Slight desaturation + darker overall to avoid bright colors */
-  filter: blur(48px) saturate(0.9) grayscale(0.12) brightness(0.78);
-  opacity: 0.35;
-  animation: lt-move-gradient 60s linear infinite;
-    transform: translateZ(0);
+    /* Larger background for smooth transform animation */
+    background-size: 400% 400%;
+    background-position: center;
+    /* Reduced blur for MUCH better performance - customizable via CSS variable */
+    filter: blur(var(--bg-blur, 24px)) saturate(0.85) brightness(0.7);
+    opacity: 0.28;
+    /* Animate transform instead of background-position - MUCH faster */
+    animation: lt-scale-rotate 90s ease-in-out infinite;
   }
 
-  /* A thin overlay layer to add contrast and a moving sheen */
+  /* Simplified overlay - reduced filter complexity */
   .lt-bg-layer-2 {
     z-index: 2;
-    /* subtle sheen but muted */
-    background: linear-gradient(60deg, rgba(255,255,255,0.01), rgba(0,0,0,0.06));
+    background: linear-gradient(60deg, rgba(255,255,255,0.008), rgba(0,0,0,0.04));
     mix-blend-mode: overlay;
-  filter: blur(8px) brightness(0.9) saturate(0.95);
-  opacity: 0.35;
-  animation: lt-move-gradient 90s linear reverse infinite;
+    opacity: 0.3;
+    /* Simple slow rotation - very cheap */
+    animation: lt-slow-rotate 120s linear infinite;
   }
 
-  /* Small blurred dots: repeated radial gradients with low opacity. Moves slowly. */
+  /* Simplified dots - single gradient instead of multiple */
   .lt-bg-layer-3 {
     z-index: 3;
-    background-image:
-      radial-gradient(circle at 10% 20%, rgba(255,255,255,0.06) 0, rgba(255,255,255,0.00) 30%),
-      radial-gradient(circle at 70% 10%, rgba(255,255,255,0.05) 0, rgba(255,255,255,0.00) 30%),
-      radial-gradient(circle at 30% 80%, rgba(255,255,255,0.04) 0, rgba(255,255,255,0.00) 30%),
-      radial-gradient(circle at 85% 65%, rgba(255,255,255,0.05) 0, rgba(255,255,255,0.00) 30%);
-    background-size: 60% 60%, 50% 50%, 70% 70%, 40% 40%;
-  filter: blur(12px) brightness(0.95) saturate(0.9);
-  opacity: 0.30;
-  animation: lt-drift 80s linear infinite;
+    background: radial-gradient(circle at 30% 40%, rgba(255,255,255,0.03) 0, transparent 50%);
+    background-size: 200% 200%;
+    opacity: 0.2;
+    /* Gentle drift - GPU accelerated */
+    animation: lt-drift-simple 100s ease-in-out infinite;
   }
 
-  /* Bigger blurred spots that gently move—this layer adds depth and subtle motion. */
+  /* Simplified depth layer - minimal blur */
   .lt-bg-layer-4 {
     z-index: 4;
-    background-image:
-      radial-gradient(circle at 20% 30%, rgba(255,255,255,0.04) 0, rgba(255,255,255,0) 35%),
-      radial-gradient(circle at 75% 40%, rgba(255,255,255,0.03) 0, rgba(255,255,255,0) 40%);
-    background-size: 120% 120%, 90% 90%;
-  filter: blur(36px) brightness(0.9) saturate(0.9);
-  opacity: 0.25;
-  animation: lt-drift-slow 120s linear infinite;
+    background: radial-gradient(circle at 50% 50%, rgba(255,255,255,0.02) 0, transparent 60%);
+    background-size: 150% 150%;
+    opacity: 0.18;
+    /* Very slow subtle movement */
+    animation: lt-drift-simple 140s ease-in-out infinite reverse;
   }
 
-  /* Subtle vignette / foreground noise to tie everything together. Users can
-     override or replace this in their custom CSS. */
+  /* Static vignette - no animation needed, saves CPU/GPU */
   .lt-bg-layer-5 {
     z-index: 5;
-    /* Dark overlay to dim the entire backdrop; tweak via --bg-dim if desired */
-    background: linear-gradient(rgba(0,0,0,0.28), rgba(0,0,0,0.42));
+    background: radial-gradient(ellipse at center, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.5) 100%);
     pointer-events: none;
-    opacity: 0.6;
-    mix-blend-mode: multiply;
-    filter: grayscale(0.06) contrast(0.95);
+    opacity: 0.5;
+    /* Static - no animation, no filters */
   }
 
-  /* Animations */
-  @keyframes lt-move-gradient {
-    0% { background-position: 0% 50%; }
-    50% { background-position: 100% 50%; }
-    100% { background-position: 0% 50%; }
+  /* Optimized animations - use ONLY transform and opacity (GPU accelerated) */
+  
+  /* Gentle scale and rotate - much cheaper than background-position */
+  @keyframes lt-scale-rotate {
+    0% { transform: translateZ(0) scale(1) rotate(0deg); }
+    50% { transform: translateZ(0) scale(1.05) rotate(2deg); }
+    100% { transform: translateZ(0) scale(1) rotate(0deg); }
   }
 
-  @keyframes lt-drift {
-    0% { transform: translate3d(0,0,0); }
-    25% { transform: translate3d(2%, -1%, 0); }
-    50% { transform: translate3d(0,2%, 0); }
-    75% { transform: translate3d(-2%, 1%, 0); }
-    100% { transform: translate3d(0,0,0); }
+  /* Simple rotation for overlay */
+  @keyframes lt-slow-rotate {
+    0% { transform: translateZ(0) rotate(0deg); }
+    100% { transform: translateZ(0) rotate(360deg); }
   }
 
-  @keyframes lt-drift-slow {
-    0% { transform: translate3d(0,0,0); }
-    50% { transform: translate3d(-3%, 2%, 0); }
-    100% { transform: translate3d(0,0,0); }
+  /* Simplified drift using only transform */
+  @keyframes lt-drift-simple {
+    0% { transform: translate3d(0, 0, 0); }
+    50% { transform: translate3d(2%, 1.5%, 0); }
+    100% { transform: translate3d(0, 0, 0); }
   }
 
   /* Pause / reduce animations and heavy transforms when user requests reduced motion
@@ -330,6 +366,9 @@
     padding: 1rem;
     border-radius: var(--border-radius, 0.5rem);
     overflow: auto;
+    /* Performance: allow browser to skip rendering off-screen content */
+    content-visibility: auto;
+    contain-intrinsic-size: 18vw 600px;
   }
 
   /* Collapsible behavior for narrower screens: make sidebars overlay when collapsed state is false */
