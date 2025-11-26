@@ -1,18 +1,28 @@
+<!-- @component
+no description yet
+-->
 <script lang="ts">
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import { writable } from 'svelte/store';
   import { addHistory, settings } from '$lib/stores';
+  
+  import googleIcon from '$lib/assets/img/google.ico?enhanced';
+  import duckduckgoIcon from '$lib/assets/img/duckduckgo.ico?enhanced';
+  import youtubeIcon from '$lib/assets/img/yt.png?enhanced';
+  import scholarIcon from '$lib/assets/img/scholar.ico?enhanced';
+  import wolframIcon from '$lib/assets/img/wolframalpha.png?enhanced';
+  import allkeyshopIcon from '$lib/assets/img/allkeyshop.png?enhanced';
 
-  type Provider = { id: string; name: string; action: string; param?: string; icon?: string };
+  type Provider = { id: string; name: string; action: string; param?: string; icon: any };
 
   const providers: Provider[] = [
-    { id: 'google', name: 'Google', action: 'https://www.google.com/search', param: 'q', icon: 'https://www.google.com/favicon.ico' },
-    { id: 'duckduckgo', name: 'DuckDuckGo', action: 'https://duckduckgo.com/', param: 'q', icon: 'https://duckduckgo.com/favicon.ico' },
-    { id: 'youtube', name: 'YouTube', action: 'https://www.youtube.com/results', param: 'search_query', icon: 'https://cdn-icons-png.flaticon.com/512/1384/1384060.png' },
-    { id: 'scholar', name: 'Scholar', action: 'https://scholar.google.com/scholar', param: 'q', icon: 'https://scholar.google.com/favicon.ico' },
-    { id: 'wolfram', name: 'WolframAlpha', action: 'https://www.wolframalpha.com/input', param: 'i', icon: 'https://img.icons8.com/?size=512&id=tDIcm6gQDsVj&format=png' },
-    { id: 'allkeyshop', name: 'AllKeyShop', action: 'https://www.allkeyshop.com/blog/products/', param: 'search_name', icon: 'https://allkeyshop.com/favicon.ico' }
+    { id: 'google', name: 'Google', action: 'https://www.google.com/search', param: 'q', icon: googleIcon },
+    { id: 'duckduckgo', name: 'DuckDuckGo', action: 'https://duckduckgo.com/', param: 'q', icon: duckduckgoIcon },
+    { id: 'youtube', name: 'YouTube', action: 'https://www.youtube.com/results', param: 'search_query', icon: youtubeIcon },
+    { id: 'scholar', name: 'Scholar', action: 'https://scholar.google.com/scholar', param: 'q', icon: scholarIcon },
+    { id: 'wolfram', name: 'WolframAlpha', action: 'https://www.wolframalpha.com/input', param: 'i', icon: wolframIcon },
+    { id: 'allkeyshop', name: 'AllKeyShop', action: 'https://www.allkeyshop.com/blog/products/', param: 'search_name', icon: allkeyshopIcon }
   ];
 
   const selected = writable<Provider>(providers[0]);
@@ -158,7 +168,11 @@
   <div class="msc-row">
     <button type="button" class="primary hollow provider-button" aria-label={`Provider: ${$selected.name}`} on:click={() => providersVisible.update(v => !v)}>
       {#if $selected}
-        <img class="provider-img" src="{$selected.icon}" alt="{$selected.name}">
+        {#if typeof $selected.icon !== 'string'}
+          <enhanced:img class="provider-img" src={$selected.icon} alt={$selected.name} />
+        {:else}
+          <img class="provider-img" src={$selected.icon} alt={$selected.name} />
+        {/if}
       {/if}
     </button>
 
@@ -179,7 +193,12 @@
   <div class="provider-list" class:visible={$providersVisible} aria-hidden={!$providersVisible}>
     {#each providers as p}
       <button type="button" class="hollow provider-list-button" on:click={() => selectProvider(p)} title={p.name}>
-        <img class="provider-list-img" src={p.icon} alt={p.name}> <span class="provider-name">{p.name}</span>
+        {#if typeof p.icon !== 'string'}
+          <enhanced:img class="provider-list-img" src={p.icon} alt={p.name} />
+        {:else}
+          <img class="provider-list-img" src={p.icon} alt={p.name} />
+        {/if}
+        <span class="provider-name">{p.name}</span>
       </button>
     {/each}
   </div>

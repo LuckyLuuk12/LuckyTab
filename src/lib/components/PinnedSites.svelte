@@ -1,26 +1,46 @@
+<!-- @component
+no description yet
+-->
 <script lang="ts">
   import { settings } from '$lib/stores';
   import type { PinnedSite } from '$lib/types';
   import { browser } from '$app/environment';
   import { get } from 'svelte/store';
   
+  import brightspace from '$lib/assets/img/brightspace.png?enhanced';
+  import youtube from '$lib/assets/img/yt.png?enhanced';
+  import github from '$lib/assets/img/github.png?enhanced';
+  import chatgpt from '$lib/assets/img/chatgpt.ico?enhanced';
+  import ru from '$lib/assets/img/ru.ico?enhanced';
+  import converter from '$lib/assets/img/converter.ico?enhanced';
+  import overleaf from '$lib/assets/img/overleaf.ico?enhanced';
+  import kablan from '$lib/assets/img/kablan.png?enhanced';
+  import modrinth from '$lib/assets/img/modrinth.ico?enhanced';
+  import cloudflare from '$lib/assets/img/cloudflare.png?enhanced';
+  import wetransfer from '$lib/assets/img/wetransfer.png?enhanced';
+  import allkeyshop from '$lib/assets/img/allkeyshop.png?enhanced';
+  import wakatime from '$lib/assets/img/wakatime.ico?enhanced';
+  import linkedin from '$lib/assets/img/linkedin.png?enhanced';
+  import paypal from '$lib/assets/img/paypal.ico?enhanced';
+  import wolfram from '$lib/assets/img/wolframalpha.png?enhanced';
+  
   const fallbackPinnedSites = [
-    { id: 'brightspace', title: 'Brightspace', url: 'https://brightspace.ru.nl/d2l/home', custom_favicon: 'https://res.cloudinary.com/apideck/image/upload/v1638671580/icons/brightspace.png' },
-    { id: 'youtube', title: 'YouTube', url: 'https://youtube.com', custom_favicon: 'https://cdn-icons-png.flaticon.com/512/1384/1384060.png' },
-    { id: 'github', title: 'Github', url: 'https://github.com', custom_favicon: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/ae/Github-desktop-logo-symbol.svg/2048px-Github-desktop-logo-symbol.svg.png' },
-    { id: 'chatgpt', title: 'ChatGPT', url: 'https://chat.openai.com', custom_favicon: 'https://chat.openai.com/favicon.ico' },
-    { id: 'rooster', title: 'Persoonlijk Rooster', url: 'https://persoonlijkrooster.ru.nl/schedule', custom_favicon: 'https://persoonlijkrooster.ru.nl/style/icons/favicon-7765a9a12ec3d4bc5e504c96f83c1008.ico' },
-    { id: 'converter', title: 'Converter', url: 'https://online-convert.com', custom_favicon: 'https://online-convert.com/favicon.ico' },
-    { id: 'overleaf', title: 'Overleaf', url: 'https://overleaf.com', custom_favicon: 'https://overleaf.com/favicon.ico' },
-    { id: 'kablan', title: 'Kablan.nl', url: 'https://kablan.nl', custom_favicon: 'https://w7.pngwing.com/pngs/882/529/png-transparent-mobile-app-development-computer-icons-software-development-software-developer-others-miscellaneous-mobile-app-development-rim-thumbnail.png' },
-    { id: 'modrinth', title: 'Modrinth', url: 'https://modrinth.com/mods', custom_favicon: 'https://modrinth.com/favicon.ico' },
-    { id: 'cloudflare', title: 'Cloudflare', url: 'https://cloudflare.com', custom_favicon: 'https://www.cloudflare.com/favicon.ico' },
-    { id: 'wetransfer', title: 'WeTransfer', url: 'https://wetransfer.com', custom_favicon: 'https://images.seeklogo.com/logo-png/25/3/wetransfer-logo-png_seeklogo-256244.png' },
-    { id: 'allkeyshop', title: 'All Key Shop', url: 'https://allkeyshop.com', custom_favicon: 'https://tenereteam.s3.us-west-1.amazonaws.com/allkeyshop-logo-4?v=1720238674' },
-    { id: 'wakatime', title: 'WakaTime', url: 'https://wakatime.com', custom_favicon: 'https://wakatime.com/favicon.ico' },
-    { id: 'linkedin', title: 'LinkedIn', url: 'https://linkedin.com', custom_favicon: 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/81/LinkedIn_icon.svg/2048px-LinkedIn_icon.svg.png' },
-    { id: 'paypal', title: 'PayPal', url: 'https://paypal.com/myaccount/summary', custom_favicon: 'https://www.paypalobjects.com/en_US/i/icon/pp_favicon_x.ico' },
-    { id: 'wolfram', title: 'Wolfram Alpha', url: 'https://www.wolframalpha.com', custom_favicon: 'https://img.icons8.com/?size=512&id=tDIcm6gQDsVj&format=png' }
+    { id: 'brightspace', title: 'Brightspace', url: 'https://brightspace.ru.nl/d2l/home', custom_favicon: brightspace },
+    { id: 'youtube', title: 'YouTube', url: 'https://youtube.com', custom_favicon: youtube },
+    { id: 'github', title: 'Github', url: 'https://github.com', custom_favicon: github },
+    { id: 'chatgpt', title: 'ChatGPT', url: 'https://chat.openai.com', custom_favicon: chatgpt },
+    { id: 'rooster', title: 'Persoonlijk Rooster', url: 'https://persoonlijkrooster.ru.nl/schedule', custom_favicon: ru },
+    { id: 'converter', title: 'Converter', url: 'https://online-convert.com', custom_favicon: converter },
+    { id: 'overleaf', title: 'Overleaf', url: 'https://overleaf.com', custom_favicon: overleaf },
+    { id: 'kablan', title: 'Kablan.nl', url: 'https://kablan.nl', custom_favicon: kablan },
+    { id: 'modrinth', title: 'Modrinth', url: 'https://modrinth.com/mods', custom_favicon: modrinth },
+    { id: 'cloudflare', title: 'Cloudflare', url: 'https://cloudflare.com', custom_favicon: cloudflare },
+    { id: 'wetransfer', title: 'WeTransfer', url: 'https://wetransfer.com', custom_favicon: wetransfer },
+    { id: 'allkeyshop', title: 'All Key Shop', url: 'https://allkeyshop.com', custom_favicon: allkeyshop },
+    { id: 'wakatime', title: 'WakaTime', url: 'https://wakatime.com', custom_favicon: wakatime },
+    { id: 'linkedin', title: 'LinkedIn', url: 'https://linkedin.com', custom_favicon: linkedin },
+    { id: 'paypal', title: 'PayPal', url: 'https://paypal.com/myaccount/summary', custom_favicon: paypal },
+    { id: 'wolfram', title: 'Wolfram Alpha', url: 'https://www.wolframalpha.com', custom_favicon: wolfram }
   ];
 </script>
 
@@ -29,7 +49,11 @@
   <div class="pinned-grid">
     {#each $settings.pinned.length !== 0 ? $settings.pinned : fallbackPinnedSites as site}
       <a class="pinned-link gradient-dark-gray" href={site.url} rel="noreferrer noopener">
-        <img class="pinned-img" src={site.custom_favicon ?? getFavicon(site.url)} alt="" loading="lazy" decoding="async" />
+        {#if site.custom_favicon && typeof site.custom_favicon !== 'string'}
+          <enhanced:img class="pinned-img" src={site.custom_favicon} alt="" />
+        {:else}
+          <img class="pinned-img" src={(site.custom_favicon ?? getFavicon(site.url)) as string} alt="" loading="lazy" decoding="async" />
+        {/if}
         <div class="pinned-title">{site.title}</div>
       </a>
     {/each}
