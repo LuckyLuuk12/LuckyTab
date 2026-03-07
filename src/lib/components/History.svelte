@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { settings, clearHistory } from '$lib/stores';
+  import { settings, clearHistory } from "$lib/stores";
 
   function humanTime(t: number) {
     const d = new Date(t);
@@ -10,7 +10,11 @@
 <div class="history-container">
   <div class="history-header">
     <h4 class="history-title">History</h4>
-    <button class="red hollow history-clear" aria-label="Clear history" on:click={() => clearHistory()}>
+    <button
+      class="red hollow history-clear"
+      aria-label="Clear history"
+      onclick={() => clearHistory()}
+    >
       <i class="fa fa-trash" aria-hidden="true"></i>
     </button>
   </div>
@@ -22,13 +26,18 @@
       {#each $settings.history as h}
         <li class="history-item">
           {#if h.url}
-            <a class="history-link" href={h.url} target="_blank" rel="noopener noreferrer">
+            <a
+              class="history-link"
+              href={h.url}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
               <div class="history-row">
                 <div class="history-main">
                   <span class="history-icon" aria-hidden="true">
-                    {#if h.type === 'search'}
+                    {#if h.type === "search"}
                       <i class="fa fa-search"></i>
-                    {:else if h.type === 'translate'}
+                    {:else if h.type === "translate"}
                       <i class="fa fa-language"></i>
                     {:else}
                       <i class="fa fa-history"></i>
@@ -49,9 +58,9 @@
             <div class="history-row no-link">
               <div class="history-main">
                 <span class="history-icon" aria-hidden="true">
-                  {#if h.type === 'search'}
+                  {#if h.type === "search"}
                     <i class="fa fa-search"></i>
-                  {:else if h.type === 'translate'}
+                  {:else if h.type === "translate"}
                     <i class="fa fa-language"></i>
                   {:else}
                     <i class="fa fa-history"></i>
@@ -85,12 +94,15 @@
     gap: 0.5rem;
   }
   .history-header {
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
-    gap:0.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
   }
-  .history-title { margin: 0; font-size: 1rem; }
+  .history-title {
+    margin: 0;
+    font-size: 1rem;
+  }
   .history-clear {
     white-space: nowrap;
     display: inline-flex;
@@ -102,44 +114,74 @@
   }
 
   /* Make the clear/trash icon use a red variable (with fallbacks) */
-  .history-clear .fa { color: var(--red, var(--quaternary-700, #b02e43)); font-size: 1.1rem; line-height: 1; }
+  .history-clear .fa {
+    color: var(--red, var(--quaternary-700, #b02e43));
+    font-size: 1.1rem;
+    line-height: 1;
+  }
   .history-clear:hover {
     transform: unset;
   }
 
-  .history-empty { color: var(--secondary-900, #999); padding: 0.5rem 0; }
+  .history-empty {
+    color: var(--secondary-900, #999);
+    padding: 0.5rem 0;
+  }
 
-  .history-list { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:0.25rem; }
-  .history-item { border-radius:0.375rem; }
+  .history-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .history-item {
+    border-radius: 0.375rem;
+  }
 
-  .history-link, .history-row.no-link {
+  .history-link,
+  .history-row.no-link {
     display: block;
     padding: 0.5rem;
-    border-radius:0.375rem;
-    background: var(--card, rgba(255,255,255,0.02));
+    border-radius: 0.375rem;
+    background: var(--card, rgba(255, 255, 255, 0.02));
     color: inherit;
     text-decoration: none;
   }
   .history-link:hover {
-    background: var(--card-hover, rgba(255,255,255,0.04));
+    background: var(--card-hover, rgba(255, 255, 255, 0.04));
   }
 
-  .history-row { display:flex; justify-content:space-between; align-items:center; gap:0.5rem; }
-  .history-main { display:flex; align-items:flex-start; gap:0.5rem; flex:1; min-width:0; }
+  .history-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .history-main {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    flex: 1;
+    min-width: 0;
+  }
 
   .history-icon {
-    display:inline-flex;
-    align-items:center;
-    justify-content:center;
-    width:1rem;
-    height:1rem;
-    flex:0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1rem;
+    height: 1rem;
+    flex: 0 0 auto;
     color: var(--secondary-700, #9aa);
     opacity: 0.95;
     font-size: 0.7rem; /* match the timestamp size */
     margin-top: 0.06rem; /* slight vertical alignment with small text */
   }
-  .history-icon .fa { line-height:1; }
+  .history-icon .fa {
+    line-height: 1;
+  }
 
   /* show more of the search text: allow up to 2 lines and clamp */
   .history-text {
@@ -156,6 +198,10 @@
   }
 
   /* smaller timestamp */
-  .history-time { color:var(--secondary-800,#999); font-size: 0.7rem; margin-left:0.5rem; white-space:nowrap; }
-
+  .history-time {
+    color: var(--secondary-800, #999);
+    font-size: 0.7rem;
+    margin-left: 0.5rem;
+    white-space: nowrap;
+  }
 </style>

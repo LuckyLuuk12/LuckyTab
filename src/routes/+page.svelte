@@ -7,9 +7,9 @@
   import { browser } from "$app/environment";
   import SearchBar from "$lib/components/SearchBar.svelte";
   import PinnedSites from "$lib/components/PinnedSites.svelte";
-  import Settings from "$lib/components/Settings.svelte";
   import Translator from "$lib/components/Translator.svelte";
   import History from "$lib/components/History.svelte";
+  import { settings } from "$lib/stores";
   import favicon from "$lib/assets/favicon.png";
 
   // Focus the search input on mount
@@ -130,15 +130,21 @@
   <title>New Tab</title>
   <meta name="description" content="" />
   <link rel="icon" type="image/png" href={favicon} />
-  <!-- Preconnect to search providers for faster searches -->
+
+  <!-- Preconnect to critical search providers for faster initial searches -->
   <link
     rel="preconnect"
     href="https://www.google.com"
     crossorigin="anonymous"
   />
+
+  <!-- DNS prefetch for other frequently used providers -->
   <link rel="dns-prefetch" href="https://www.google.com" />
   <link rel="dns-prefetch" href="https://duckduckgo.com" />
   <link rel="dns-prefetch" href="https://www.youtube.com" />
+  <link rel="dns-prefetch" href="https://scholar.google.com" />
+  <link rel="dns-prefetch" href="https://www.wolframalpha.com" />
+  <link rel="dns-prefetch" href="https://chatgpt.com" />
 </svelte:head>
 
 <!-- Background container: sits on top of the <body> but behind the app UI.
@@ -164,7 +170,14 @@
       aria-hidden={!leftOpen && !isWide}
       data-open={leftOpen}
     >
-      <Translator />
+      {#if $settings.enableTranslator ?? true}
+        <Translator />
+      {:else}
+        <div style="padding: 1rem; opacity: 0.7;">
+          <p>Translator is disabled.</p>
+          <p style="font-size: 0.9rem;">Enable it in Settings.</p>
+        </div>
+      {/if}
     </aside>
   {/if}
 
@@ -186,7 +199,14 @@
       aria-hidden={!rightOpen && !isWide}
       data-open={rightOpen}
     >
-      <History />
+      {#if $settings.enableHistory ?? true}
+        <History />
+      {:else}
+        <div style="padding: 1rem; opacity: 0.7;">
+          <p>History is disabled.</p>
+          <p style="font-size: 0.9rem;">Enable it in Settings.</p>
+        </div>
+      {/if}
     </aside>
   {/if}
 
@@ -196,7 +216,7 @@
       class="sidebar-toggle left"
       aria-expanded={leftOpen}
       aria-controls="left-sidebar"
-      on:click={toggleLeft}
+      onclick={toggleLeft}
       title="Toggle left sidebar"
       aria-label="Toggle left sidebar"
     >
@@ -211,7 +231,7 @@
       class="sidebar-toggle right"
       aria-expanded={rightOpen}
       aria-controls="right-sidebar"
-      on:click={toggleRight}
+      onclick={toggleRight}
       title="Toggle right sidebar"
       aria-label="Toggle right sidebar"
     >
@@ -225,7 +245,9 @@
   {/if}
 
   {#if showSettings}
-    <Settings />
+    {#await import("$lib/components/Settings.svelte") then { default: Settings }}
+      <Settings />
+    {/await}
   {/if}
 </main>
 

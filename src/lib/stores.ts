@@ -1,5 +1,5 @@
 import { browser } from '$app/environment';
-import { writable } from 'svelte/store';
+import { writable, get } from 'svelte/store';
 import type { PinnedSite, Settings } from '$lib/types';
 
 const LOCAL_KEY_SETTINGS = 'lt:settings:v1';
@@ -24,23 +24,45 @@ function writeJson(key: string, data: unknown) {
   }
 }
 
+// Debounce helper to reduce localStorage writes
+function debounce<T extends (...args: any[]) => void>(fn: T, delay: number): T {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  return ((...args: Parameters<T>) => {
+    if (timeout) clearTimeout(timeout);
+    timeout = setTimeout(() => fn(...args), delay);
+  }) as T;
+}
+
 const defaultSettings: Settings = {
   pinned: [],
   customCss: '',
-  colors: undefined
+  colors: undefined,
+
+  // Feature toggles (defaults to enabled for backwards compatibility)
+  enableProviderScroll: true,
+  enableProviderReorder: true,
+  enableTranslator: true,
+  enableHistory: true,
+  includeTranslateInHistory: true,
+
+  // Translator defaults
+  defaultTranslateFrom: 'auto',
+  defaultTranslateTo: 'en',
+  supportedLanguages: ['en', 'es', 'fr', 'de', 'it', 'pt', 'nl', 'pl', 'ru', 'ja', 'zh', 'ko', 'ar']
 };
 
 // ensure history present
 if (!defaultSettings.history) defaultSettings.history = [];
 
 export const settings = writable<Settings>(readJson<Settings>(LOCAL_KEY_SETTINGS, defaultSettings));
-settings.subscribe((v) => writeJson(LOCAL_KEY_SETTINGS, v));
+
+// Debounce localStorage writes to avoid excessive I/O (300ms delay for smooth UI)
+const debouncedWriteSettings = debounce((v: Settings) => writeJson(LOCAL_KEY_SETTINGS, v), 300);
+settings.subscribe(debouncedWriteSettings);
 
 // Convenience helpers for compatibility
 export function getPinned() {
-  let s: Settings;
-  settings.subscribe((v) => (s = v))();
-  return s!.pinned;
+  return get(settings).pinned;
 }
 
 export function addPinned(site: PinnedSite) {
@@ -61,6 +83,16 @@ export function setCustomCss(css: string) {
 
 // History helpers
 export function addHistory(entry: Partial<import('$lib/types').HistoryEntry>) {
+  // Check if history is enabled in settings
+  let currentSettings: Settings;
+  settings.subscribe(s => currentSettings = s)();
+
+  // Don't add if history is disabled
+  if (currentSettings!.enableHistory === false) return;
+
+  // Don't add translate entries if includeTranslateInHistory is disabled
+  if (entry.type === 'translate' && currentSettings!.includeTranslateInHistory === false) return;
+
   const MAX_HISTORY = 200; // keep only this many recent entries
   const MAX_FIELD_CHARS = 2000; // truncate very long fields to avoid huge localStorage entries
 
@@ -96,4 +128,8 @@ export function clearAllSettings() {
     localStorage.removeItem(LOCAL_KEY_SETTINGS);
   }
   settings.set(defaultSettings);
+}
+
+export function setProviderOrder(order: string[]) {
+  settings.update((s) => ({ ...s, providerOrder: order }));
 }
