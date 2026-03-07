@@ -162,7 +162,7 @@
 {/if}
 
 <main class="page-main">
-  {#if showSidebars}
+  {#if showSidebars && ($settings.enableTranslator ?? true)}
     <aside
       id="left-sidebar"
       class="sidebar left"
@@ -170,14 +170,7 @@
       aria-hidden={!leftOpen && !isWide}
       data-open={leftOpen}
     >
-      {#if $settings.enableTranslator ?? true}
-        <Translator />
-      {:else}
-        <div style="padding: 1rem; opacity: 0.7;">
-          <p>Translator is disabled.</p>
-          <p style="font-size: 0.9rem;">Enable it in Settings.</p>
-        </div>
-      {/if}
+      <Translator />
     </aside>
   {/if}
 
@@ -191,7 +184,7 @@
     </div>
   </div>
 
-  {#if showSidebars}
+  {#if showSidebars && ($settings.enableHistory ?? true)}
     <aside
       id="right-sidebar"
       class="sidebar right"
@@ -199,14 +192,7 @@
       aria-hidden={!rightOpen && !isWide}
       data-open={rightOpen}
     >
-      {#if $settings.enableHistory ?? true}
-        <History />
-      {:else}
-        <div style="padding: 1rem; opacity: 0.7;">
-          <p>History is disabled.</p>
-          <p style="font-size: 0.9rem;">Enable it in Settings.</p>
-        </div>
-      {/if}
+      <History />
     </aside>
   {/if}
 
