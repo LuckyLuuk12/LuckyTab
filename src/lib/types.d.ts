@@ -48,6 +48,9 @@ export type Settings = {
   defaultTranslateFrom?: string; // Default source language
   defaultTranslateTo?: string; // Default target language
   supportedLanguages?: string[]; // List of language codes to show
+
+  // Safety check
+  safeBrowsingApiKey?: string; // Google Safe Browsing API v4 key (free)
 };
 
 export type HistoryEntry = {

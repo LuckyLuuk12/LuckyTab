@@ -23,6 +23,19 @@ no description yet
   // Track if component has mounted to avoid hydration mismatch
   let mounted = $state(false);
 
+  // URL safety check state
+  let safetyCheckPending = $state(false);
+  let blockedUrlInfo = $state<{ url: string; rating: string } | null>(null);
+  let skippedUrlInfo = $state<{ url: string } | null>(null);
+  let urlSafetyIndicator = $state<{
+    status: "checking" | "safe" | "unsafe" | "unknown";
+    url: string;
+    rating?: string;
+  } | null>(null);
+  let urlSafetyPreviewVersion = 0;
+  let lastPreviewCheckedUrl = $state<string | null>(null);
+  let lastPreviewApiKey = $state("");
+
   // Ordered providers based on settings (or default order)
   // Only apply custom order after mounting to avoid SSR/client mismatch
   let orderedProviders = $derived.by(() => {
@@ -103,6 +116,57 @@ no description yet
     originalTyped = "";
   });
 
+  // Debounced URL safety preview while typing direct URLs.
+  $effect(() => {
+    const previewUrl = getPreviewUrl(query);
+    const apiKey = $settings.safeBrowsingApiKey?.trim() ?? "";
+
+    if (!previewUrl || safetyCheckPending) {
+      urlSafetyIndicator = null;
+      return;
+    }
+
+    // Prevent repeated checks when focus/blur or unrelated state updates rerun this effect.
+    if (previewUrl === lastPreviewCheckedUrl && apiKey === lastPreviewApiKey) {
+      return;
+    }
+
+    const thisRun = ++urlSafetyPreviewVersion;
+    const timeoutId = setTimeout(async () => {
+      if (thisRun !== urlSafetyPreviewVersion) return;
+      urlSafetyIndicator = { status: "checking", url: previewUrl };
+      const { verdict, rating } = await checkUrlSafety(previewUrl);
+      if (thisRun !== urlSafetyPreviewVersion) return;
+
+      lastPreviewCheckedUrl = previewUrl;
+      lastPreviewApiKey = apiKey;
+
+      if (verdict === "safe") {
+        urlSafetyIndicator = {
+          status: "safe",
+          url: previewUrl,
+          rating: rating || "Safe",
+        };
+      } else if (verdict === "unsafe") {
+        urlSafetyIndicator = {
+          status: "unsafe",
+          url: previewUrl,
+          rating: rating || "Unsafe",
+        };
+      } else {
+        urlSafetyIndicator = {
+          status: "unknown",
+          url: previewUrl,
+        };
+      }
+    }, 1200);
+
+    return () => {
+      clearTimeout(timeoutId);
+      urlSafetyPreviewVersion++;
+    };
+  });
+
   onMount(() => {
     mounted = true;
     if (browser && inputEl) inputEl.focus();
@@ -129,6 +193,39 @@ no description yet
     if (command === "wiki") return { providerId: "wiki", query: commandQuery };
 
     return null;
+  }
+
+  function isLikelyURI(s: string) {
+    const t = s.trim();
+    if (!t) return false;
+    // has a scheme like http:// or ftp://
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(t)) return true;
+    // avoid treating phrases with spaces as URLs
+    if (t.includes(" ")) return false;
+    // localhost or contains a dot (example.com)
+    if (/^localhost\b/.test(t)) return true;
+    if (/\./.test(t)) return true;
+    return false;
+  }
+
+  function ensureUrl(s: string) {
+    const t = s.trim();
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(t)) return t;
+    return `https://${t}`;
+  }
+
+  function getPreviewUrl(input: string) {
+    if (parseSearchCommand(input)) return null;
+    if (!isLikelyURI(input)) return null;
+    return ensureUrl(input);
+  }
+
+  function getUrlSafetyIndicatorTitle() {
+    if (!urlSafetyIndicator) return "";
+    if (urlSafetyIndicator.status === "checking") return "Checking site...";
+    if (urlSafetyIndicator.status === "safe") return "Safe site";
+    if (urlSafetyIndicator.status === "unsafe") return "Unsafe site";
+    return "Unknown risk";
   }
 
   async function copyToClipboard(text: string) {
@@ -664,7 +761,50 @@ no description yet
     draggedIndex = null;
   }
 
-  function submitForm(e: Event) {
+  async function checkUrlSafety(
+    urlStr: string,
+  ): Promise<{ verdict: "safe" | "unsafe" | "skip"; rating: string }> {
+    const apiKey = $settings.safeBrowsingApiKey?.trim();
+    if (!apiKey) return { verdict: "skip", rating: "" };
+
+    try {
+      const endpoint = `https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${encodeURIComponent(apiKey)}`;
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(5000),
+        body: JSON.stringify({
+          client: { clientId: "luckytab", clientVersion: "1.0" },
+          threatInfo: {
+            threatTypes: [
+              "MALWARE",
+              "SOCIAL_ENGINEERING",
+              "UNWANTED_SOFTWARE",
+              "POTENTIALLY_HARMFUL_APPLICATION",
+            ],
+            platformTypes: ["ANY_PLATFORM"],
+            threatEntryTypes: ["URL"],
+            threatEntries: [{ url: urlStr }],
+          },
+        }),
+      });
+      if (!res.ok) return { verdict: "skip", rating: "" };
+      const data = await res.json();
+      // Empty matches object means the URL is safe
+      if (!data.matches || data.matches.length === 0)
+        return { verdict: "safe", rating: "Safe" };
+      const type: string = data.matches[0]?.threatType ?? "Unsafe";
+      const label = type
+        .replace(/_/g, " ")
+        .toLowerCase()
+        .replace(/\b\w/g, (c: string) => c.toUpperCase());
+      return { verdict: "unsafe", rating: label };
+    } catch {
+      return { verdict: "skip", rating: "" };
+    }
+  }
+
+  async function submitForm(e: Event) {
     e.preventDefault();
     const command = parseSearchCommand(query);
     const q = command ? command.query : query;
@@ -698,29 +838,21 @@ no description yet
       selectedProviderId = p.id;
     }
 
-    // Helper: detect if the input looks like a URI
-    function isLikelyURI(s: string) {
-      const t = s.trim();
-      if (!t) return false;
-      // has a scheme like http:// or ftp://
-      if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(t)) return true;
-      // avoid treating phrases with spaces as URLs
-      if (t.includes(" ")) return false;
-      // localhost or contains a dot (example.com)
-      if (/^localhost\b/.test(t)) return true;
-      if (/\./.test(t)) return true;
-      return false;
-    }
-
-    function ensureUrl(s: string) {
-      const t = s.trim();
-      if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(t)) return t;
-      return `https://${t}`;
-    }
-
     // If the user entered a URI, go there directly regardless of provider
     if (!command && isLikelyURI(q)) {
       const urlStr = ensureUrl(q);
+      safetyCheckPending = true;
+      const { verdict, rating } = await checkUrlSafety(urlStr);
+      safetyCheckPending = false;
+      if (verdict === "unsafe") {
+        blockedUrlInfo = { url: urlStr, rating };
+        return;
+      }
+      if (verdict === "skip") {
+        // Check was blocked (e.g. uBlock) or timed out — require explicit confirmation
+        skippedUrlInfo = { url: urlStr };
+        return;
+      }
       try {
         addHistory({
           type: "visit",
@@ -835,6 +967,27 @@ no description yet
         oninput={handleInput}
         onkeydown={handleKeydown}
       />
+      {#if urlSafetyIndicator}
+        <span
+          class="url-safety-indicator"
+          class:checking={urlSafetyIndicator.status === "checking"}
+          class:safe={urlSafetyIndicator.status === "safe"}
+          class:unsafe={urlSafetyIndicator.status === "unsafe"}
+          class:unknown={urlSafetyIndicator.status === "unknown"}
+          aria-label={getUrlSafetyIndicatorTitle()}
+        >
+          {#if urlSafetyIndicator.status === "checking"}
+            <i class="fa fa-spinner fa-spin" aria-hidden="true"></i>
+          {:else if urlSafetyIndicator.status === "safe"}
+            <i class="fa fa-check-circle" aria-hidden="true"></i>
+          {:else if urlSafetyIndicator.status === "unsafe"}
+            <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+          {:else}
+            <i class="fa fa-question-circle" aria-hidden="true"></i>
+          {/if}
+          <span class="url-safety-tooltip">{getUrlSafetyIndicatorTitle()}</span>
+        </span>
+      {/if}
     </div>
 
     <button
@@ -861,6 +1014,99 @@ no description yet
   </div>
 
   <!-- Autocomplete suggestions dropdown - now directly below searchbar -->
+  {#if safetyCheckPending}
+    <div class="safety-checking">
+      <i class="fa fa-spinner fa-spin" aria-hidden="true"></i>
+      <span>Checking URL safety via Google Safe Browsing...</span>
+    </div>
+  {/if}
+
+  {#if skippedUrlInfo}
+    <div class="safety-warning safety-warning-amber" role="alert">
+      <div class="safety-warning-header safety-warning-header-amber">
+        <i class="fa fa-question-circle" aria-hidden="true"></i>
+        <span
+          >Safety check unavailable — Google Safe Browsing could not be reached</span
+        >
+      </div>
+      <div class="safety-warning-url">{skippedUrlInfo.url}</div>
+      <div class="safety-actions">
+        <button
+          type="button"
+          class="safety-proceed safety-proceed-amber"
+          onclick={() => {
+            const urlStr = skippedUrlInfo!.url;
+            skippedUrlInfo = null;
+            try {
+              addHistory({
+                type: "visit",
+                provider: "direct",
+                query: urlStr,
+                url: urlStr,
+              });
+            } catch {}
+            if (openNew) window.open(urlStr, "_blank");
+            else window.location.href = urlStr;
+          }}
+        >
+          <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+          Visit anyway
+        </button>
+        <button
+          type="button"
+          class="safety-cancel"
+          onclick={() => (skippedUrlInfo = null)}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  {/if}
+
+  {#if blockedUrlInfo}
+    <div class="safety-warning" role="alert">
+      <div class="safety-warning-header">
+        <i class="fa fa-shield-alt" aria-hidden="true"></i>
+        <span
+          >Google Safe Browsing flagged this URL as <strong
+            >{blockedUrlInfo.rating}</strong
+          ></span
+        >
+      </div>
+      <div class="safety-warning-url">{blockedUrlInfo.url}</div>
+      <div class="safety-actions">
+        <button
+          type="button"
+          class="safety-proceed"
+          onclick={() => {
+            const urlStr = blockedUrlInfo!.url;
+            blockedUrlInfo = null;
+            try {
+              addHistory({
+                type: "visit",
+                provider: "direct",
+                query: urlStr,
+                url: urlStr,
+              });
+            } catch {}
+            if (openNew) window.open(urlStr, "_blank");
+            else window.location.href = urlStr;
+          }}
+        >
+          <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+          Visit anyway
+        </button>
+        <button
+          type="button"
+          class="safety-cancel"
+          onclick={() => (blockedUrlInfo = null)}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  {/if}
+
   {#if suggestionsVisible && suggestions.length > 0}
     <div class="suggestions-dropdown" bind:this={suggestionsDropdownEl}>
       <div
@@ -1014,8 +1260,59 @@ no description yet
     height: 2.25rem;
     background: transparent;
     padding-left: 2.5rem;
+    padding-right: 2rem;
     font-size: 1rem;
     box-sizing: border-box;
+  }
+  .url-safety-indicator {
+    position: absolute;
+    right: 0.65rem;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.95rem;
+    line-height: 1;
+    pointer-events: auto;
+    opacity: 0.95;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: help;
+  }
+  .url-safety-tooltip {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 0.45rem);
+    white-space: nowrap;
+    padding: 0.3rem 0.48rem;
+    border-radius: 0.45rem;
+    background: rgba(16, 20, 26, 0.96);
+    color: #d8e0e8;
+    font-size: 0.72rem;
+    letter-spacing: 0.01em;
+    opacity: 0;
+    transform: translateY(4px);
+    transition:
+      opacity 0.14s ease,
+      transform 0.14s ease;
+    pointer-events: none;
+    z-index: 1002;
+  }
+  .url-safety-indicator:hover .url-safety-tooltip,
+  .url-safety-indicator:focus-within .url-safety-tooltip {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .url-safety-indicator.safe {
+    color: rgba(72, 185, 106, 0.95);
+  }
+  .url-safety-indicator.unsafe {
+    color: rgba(210, 95, 95, 0.95);
+  }
+  .url-safety-indicator.unknown {
+    color: rgba(200, 150, 40, 0.95);
+  }
+  .url-safety-indicator.checking {
+    color: var(--placeholder, #999);
   }
   .input-with-icon input:focus {
     outline: none !important;
@@ -1255,5 +1552,112 @@ no description yet
 
   .footer-separator {
     opacity: 0.6;
+  }
+
+  /* URL safety check UI */
+  .safety-checking {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.65rem 1rem;
+    background: var(--card, #888888);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 0.75rem;
+    font-size: 0.88rem;
+    color: var(--placeholder, #999);
+    z-index: 1000;
+  }
+
+  .safety-warning-amber {
+    border-color: rgba(180, 130, 30, 0.3);
+  }
+
+  .safety-warning-header-amber {
+    color: rgba(200, 150, 40, 0.9);
+  }
+
+  .safety-proceed-amber {
+    border-color: rgba(180, 130, 30, 0.3) !important;
+    background: rgba(60, 45, 10, 0.12) !important;
+    color: rgba(200, 150, 40, 0.9) !important;
+  }
+
+  .safety-proceed-amber:hover {
+    background: rgba(60, 45, 10, 0.22) !important;
+  }
+
+  .safety-warning {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 0.5rem;
+    background: var(--card, #888888);
+    border: 1px solid rgba(180, 60, 60, 0.3);
+    border-radius: 0.75rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    padding: 0.8rem 1rem;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .safety-warning-header {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    font-size: 0.93rem;
+    color: rgba(200, 80, 80, 0.9);
+  }
+
+  .safety-warning-url {
+    font-size: 0.82rem;
+    color: var(--placeholder, #999);
+    word-break: break-all;
+  }
+
+  .safety-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.2rem;
+  }
+
+  .safety-proceed {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.75rem;
+    border-radius: 0.5rem;
+    border: 1px solid rgba(180, 60, 60, 0.3);
+    background: rgba(72, 24, 31, 0.12);
+    color: rgba(200, 80, 80, 0.85);
+    font-size: 0.83rem;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .safety-proceed:hover {
+    background: rgba(72, 24, 31, 0.22);
+  }
+
+  .safety-cancel {
+    padding: 0.35rem 0.75rem;
+    border-radius: 0.5rem;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    background: transparent;
+    color: var(--text, #333);
+    font-size: 0.83rem;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .safety-cancel:hover {
+    background: rgba(255, 255, 255, 0.12);
   }
 </style>

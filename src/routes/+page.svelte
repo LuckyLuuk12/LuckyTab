@@ -321,7 +321,7 @@
     filter: blur(var(--bg-blur, 24px)) saturate(0.85) brightness(0.7);
     opacity: 0.28;
     /* Animate transform instead of background-position - MUCH faster */
-    animation: lt-scale-rotate 90s ease-in-out infinite;
+    /* animation: lt-scale-rotate 90s ease-in-out infinite; */
   }
 
   /* Simplified overlay - reduced filter complexity */
@@ -335,7 +335,7 @@
     mix-blend-mode: overlay;
     opacity: 0.3;
     /* Simple slow rotation - very cheap */
-    animation: lt-slow-rotate 120s linear infinite;
+    /* animation: lt-slow-rotate 120s linear infinite; */
   }
 
   /* Simplified dots - single gradient instead of multiple */
@@ -349,7 +349,7 @@
     background-size: 200% 200%;
     opacity: 0.2;
     /* Gentle drift - GPU accelerated */
-    animation: lt-drift-simple 100s ease-in-out infinite;
+    /* animation: lt-drift-simple 100s ease-in-out infinite; */
   }
 
   /* Simplified depth layer - minimal blur */
@@ -363,7 +363,7 @@
     background-size: 150% 150%;
     opacity: 0.18;
     /* Very slow subtle movement */
-    animation: lt-drift-simple 140s ease-in-out infinite reverse;
+    /* animation: lt-drift-simple 140s ease-in-out infinite reverse; */
   }
 
   /* Static vignette - no animation needed, saves CPU/GPU */

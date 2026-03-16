@@ -536,6 +536,44 @@ It will also provide a reset, import, and export functionality for user settings
 
     <hr class="section-sep" />
 
+    <!-- Safety Check Settings -->
+    <h4 class="section-title">URL Safety Check</h4>
+    <p style="margin: 0 0 0.5rem; font-size: 0.85rem; opacity: 0.75;">
+      Used when you navigate directly to a URL. Get a free API key at
+      <a
+        href="https://console.cloud.google.com/apis/library/safebrowsing.googleapis.com"
+        target="_blank"
+        rel="noopener noreferrer">Google Cloud Console</a
+      >
+      (enable "Safe Browsing API", create an API key, no billing required for &lt;10k/day).
+    </p>
+    <div class="setting-row">
+      <label for="safe-browsing-key">Google Safe Browsing API key:</label>
+      <input
+        id="safe-browsing-key"
+        type="password"
+        placeholder="Paste API key here..."
+        value={$settings.safeBrowsingApiKey ?? ""}
+        oninput={(e) =>
+          settings.update((s) => ({
+            ...s,
+            safeBrowsingApiKey: e.currentTarget.value,
+          }))}
+        style="flex:1; min-width:0; font-family: monospace; font-size: 0.85rem;"
+      />
+    </div>
+    {#if !$settings.safeBrowsingApiKey?.trim()}
+      <p
+        style="margin: 0.25rem 0 0; font-size: 0.8rem; color: rgba(200,150,40,0.85);"
+      >
+        <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+        No key set — safety check will always ask for confirmation before visiting
+        URLs directly.
+      </p>
+    {/if}
+
+    <hr class="section-sep" />
+
     <!-- Translator Settings -->
     <h4 class="section-title">Translator</h4>
     <div class="toggle-option">

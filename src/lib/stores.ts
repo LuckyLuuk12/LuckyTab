@@ -73,7 +73,10 @@ const defaultSettings: Settings = {
   // Translator defaults
   defaultTranslateFrom: 'auto',
   defaultTranslateTo: 'nl',
-  supportedLanguages: ['en', 'es', 'fr', 'de', 'it', 'pt', 'nl', 'pl', 'ru', 'ja', 'zh', 'ko', 'ar']
+  supportedLanguages: ['en', 'es', 'fr', 'de', 'it', 'pt', 'nl', 'pl', 'ru', 'ja', 'zh', 'ko', 'ar'],
+
+  // Safety check
+  safeBrowsingApiKey: ''
 };
 
 // ensure history present
