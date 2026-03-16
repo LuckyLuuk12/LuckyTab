@@ -6,6 +6,7 @@
   import { goto } from "$app/navigation";
   import { browser } from "$app/environment";
   import SearchBar from "$lib/components/SearchBar.svelte";
+  import SystemInfo from "$lib/components/SystemInfo.svelte";
   import PinnedSites from "$lib/components/PinnedSites.svelte";
   import Translator from "$lib/components/Translator.svelte";
   import History from "$lib/components/History.svelte";
@@ -175,6 +176,12 @@
   {/if}
 
   <div class="center-column">
+    {#if $settings.enableSystemInfo ?? true}
+      <div class="system-wrap">
+        <SystemInfo />
+      </div>
+    {/if}
+
     <div class="pinned-wrap">
       <PinnedSites />
     </div>
@@ -565,7 +572,6 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
     gap: 1.5rem;
   }
   .sidebar.right {
@@ -574,6 +580,9 @@
   }
 
   .search-wrap {
+    width: 100%;
+  }
+  .system-wrap {
     width: 100%;
   }
   .pinned-wrap {

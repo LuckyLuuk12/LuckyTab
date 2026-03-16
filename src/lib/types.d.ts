@@ -25,6 +25,24 @@ export type Settings = {
   enableTranslator?: boolean; // Show translator tool
   enableHistory?: boolean; // Track history (affects autocomplete)
   includeTranslateInHistory?: boolean; // Save translations to history
+  enableSystemInfo?: boolean; // Show system info widget
+
+  // System info visibility toggles
+  showSystemPublicIp?: boolean;
+  showSystemConnection?: boolean;
+  showSystemMemory?: boolean;
+  showSystemBattery?: boolean;
+  showSystemTime?: boolean;
+  showSystemTimezone?: boolean;
+  showSystemLanguage?: boolean;
+  showSystemCpuCores?: boolean;
+  showInfoDate?: boolean;
+  showInfoWeather?: boolean;
+  showInfoAirQuality?: boolean;
+  infoSystemOrder?: string[];
+  infoGeneralOrder?: string[];
+  infoCollapsed?: boolean;
+  infoCollapsedVisibleKeys?: string[];
 
   // Translator settings
   defaultTranslateFrom?: string; // Default source language

@@ -44,10 +44,35 @@ const defaultSettings: Settings = {
   enableTranslator: true,
   enableHistory: true,
   includeTranslateInHistory: true,
+  enableSystemInfo: true,
+
+  // System info defaults
+  showSystemPublicIp: true,
+  showSystemConnection: true,
+  showSystemMemory: true,
+  showSystemBattery: true,
+  showSystemTime: true,
+  showSystemTimezone: true,
+  showSystemLanguage: true,
+  showSystemCpuCores: true,
+  showInfoDate: true,
+  showInfoWeather: true,
+  showInfoAirQuality: true,
+  infoSystemOrder: [
+    'public_ip',
+    'connection',
+    'device_memory',
+    'battery',
+    'language',
+    'cpu_cores'
+  ],
+  infoGeneralOrder: ['date', 'time', 'timezone', 'weather', 'air_quality'],
+  infoCollapsed: true,
+  infoCollapsedVisibleKeys: ['public_ip', 'time', 'weather'],
 
   // Translator defaults
   defaultTranslateFrom: 'auto',
-  defaultTranslateTo: 'en',
+  defaultTranslateTo: 'nl',
   supportedLanguages: ['en', 'es', 'fr', 'de', 'it', 'pt', 'nl', 'pl', 'ru', 'ja', 'zh', 'ko', 'ar']
 };
 

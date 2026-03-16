@@ -5,6 +5,13 @@
     const d = new Date(t);
     return d.toLocaleString();
   }
+
+  function removeHistoryAt(index: number) {
+    settings.update((s) => ({
+      ...s,
+      history: (s.history || []).filter((_, i) => i !== index),
+    }));
+  }
 </script>
 
 <div class="history-container">
@@ -23,8 +30,18 @@
     <div class="history-empty">No history yet</div>
   {:else}
     <ul class="history-list">
-      {#each $settings.history as h}
+      {#each $settings.history as h, idx (h.id ?? `${h.time}-${idx}`)}
         <li class="history-item">
+          <button
+            class="red hollow history-item-delete"
+            type="button"
+            aria-label="Delete history item"
+            title="Delete history item"
+            onclick={() => removeHistoryAt(idx)}
+          >
+            <i class="fa fa-trash" aria-hidden="true"></i>
+          </button>
+
           {#if h.url}
             <a
               class="history-link"
@@ -108,16 +125,22 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 0.4rem 0.6rem;
-    height: 2rem;
+    padding: 0.32rem 0.48rem;
+    height: 1.72rem;
     border-radius: 0.375rem;
+    border-color: rgba(120, 42, 52, 0.28);
+    background: rgba(72, 24, 31, 0.14);
   }
 
   /* Make the clear/trash icon use a red variable (with fallbacks) */
   .history-clear .fa {
-    color: var(--red, var(--quaternary-700, #b02e43));
-    font-size: 1.1rem;
+    color: rgba(142, 58, 71, 0.82);
+    font-size: 0.9rem;
     line-height: 1;
+  }
+  .history-clear:hover {
+    background: rgba(72, 24, 31, 0.2);
+    border-color: rgba(120, 42, 52, 0.36);
   }
   .history-clear:hover {
     transform: unset;
@@ -138,12 +161,40 @@
   }
   .history-item {
     border-radius: 0.375rem;
+    position: relative;
+  }
+
+  .history-item-delete {
+    position: absolute;
+    top: 0.32rem;
+    right: 0.32rem;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.32rem;
+    height: 1.32rem;
+    border-radius: 0.3rem;
+    padding: 0;
+    border-color: rgba(120, 42, 52, 0.22);
+    background: rgba(72, 24, 31, 0.11);
+  }
+
+  .history-item-delete .fa {
+    color: rgba(142, 58, 71, 0.74);
+    font-size: 0.72rem;
+    line-height: 1;
+  }
+
+  .history-item-delete:hover {
+    background: rgba(72, 24, 31, 0.18);
+    border-color: rgba(120, 42, 52, 0.34);
   }
 
   .history-link,
   .history-row.no-link {
     display: block;
-    padding: 0.5rem;
+    padding: 0.5rem 2.2rem 0.5rem 0.5rem;
     border-radius: 0.375rem;
     background: var(--card, rgba(255, 255, 255, 0.02));
     color: inherit;

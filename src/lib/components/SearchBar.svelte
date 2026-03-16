@@ -7,20 +7,9 @@ no description yet
   import { addHistory, settings, setProviderOrder } from "$lib/stores";
   import { DEFAULT_PINNED_SITES } from "$lib/constants";
   import { DEFAULT_PROVIDERS, type Provider } from "$lib/providerConfig";
+  import { evaluateMathExpression } from "$lib/math";
 
   const providers = DEFAULT_PROVIDERS;
-
-  // Debounce helper for performance
-  function debounce<T extends (...args: any[]) => void>(
-    fn: T,
-    delay: number,
-  ): T {
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-    return ((...args: Parameters<T>) => {
-      if (timeout) clearTimeout(timeout);
-      timeout = setTimeout(() => fn(...args), delay);
-    }) as T;
-  }
 
   // Svelte 5 runes for local reactive state
   let selectedProviderId = $state("google"); // Track provider by ID instead of index
@@ -70,14 +59,29 @@ no description yet
   );
 
   // Autocomplete suggestions
+  type SuggestionKind = "history" | "math";
   type Suggestion = {
+    kind: SuggestionKind;
     url: string;
     displayText: string;
     count: number;
+    isPinned?: boolean;
+    mathResult?: string;
   };
+  const INITIAL_VISIBLE_SUGGESTIONS = 5;
+  const SUGGESTION_BATCH_SIZE = 5;
+  const MAX_LOADED_SUGGESTIONS = 20;
+  const WINDOW_EDGE_BUFFER = 4;
+
+  let allSuggestions = $state<Suggestion[]>([]);
   let suggestions = $state<Suggestion[]>([]);
   let suggestionsVisible = $state(false);
   let selectedSuggestionIndex = $state(-1);
+  let loadedStartIndex = $state(0);
+  let loadedSuggestionCount = $state(0);
+
+  let suggestionsDropdownEl = $state<HTMLDivElement | null>(null);
+  let suggestionsListEl = $state<HTMLDivElement | null>(null);
 
   let inputEl = $state<HTMLInputElement | null>(null);
   // history browsing state
@@ -104,15 +108,258 @@ no description yet
     if (browser && inputEl) inputEl.focus();
   });
 
+  function parseSearchCommand(input: string): {
+    providerId: Provider["id"] | "wiki";
+    query: string;
+  } | null {
+    const match = input.trimStart().match(/^(yt|maps|aks|wiki)\s+(.+)$/i);
+    if (!match) return null;
+
+    const command = match[1].toLowerCase();
+    const commandQuery = match[2].trim();
+    if (!commandQuery) return null;
+
+    if (command === "yt") return { providerId: "youtube", query: commandQuery };
+    if (command === "maps") {
+      return { providerId: "googlemaps", query: commandQuery };
+    }
+    if (command === "aks") {
+      return { providerId: "allkeyshop", query: commandQuery };
+    }
+    if (command === "wiki") return { providerId: "wiki", query: commandQuery };
+
+    return null;
+  }
+
+  async function copyToClipboard(text: string) {
+    if (!browser || !navigator?.clipboard) return false;
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function getLoadCap() {
+    return Math.min(MAX_LOADED_SUGGESTIONS, allSuggestions.length);
+  }
+
+  function syncVisibleSuggestions() {
+    suggestions = allSuggestions.slice(
+      loadedStartIndex,
+      loadedStartIndex + loadedSuggestionCount,
+    );
+    suggestionsVisible = suggestions.length > 0;
+  }
+
+  function loadMoreSuggestions(batchSize = SUGGESTION_BATCH_SIZE) {
+    const cap = getLoadCap();
+    if (allSuggestions.length === 0) return false;
+
+    if (loadedSuggestionCount < cap) {
+      loadedSuggestionCount = Math.min(loadedSuggestionCount + batchSize, cap);
+      syncVisibleSuggestions();
+      return true;
+    }
+
+    const maxStart = Math.max(0, allSuggestions.length - loadedSuggestionCount);
+    if (loadedStartIndex >= maxStart) return false;
+
+    loadedStartIndex = Math.min(loadedStartIndex + batchSize, maxStart);
+    syncVisibleSuggestions();
+    return true;
+  }
+
+  function ensureSuggestionLoaded(index: number) {
+    const total = allSuggestions.length;
+    if (index < 0 || total === 0) return;
+
+    const cap = getLoadCap();
+    if (loadedSuggestionCount === 0) {
+      loadedSuggestionCount = Math.min(INITIAL_VISIBLE_SUGGESTIONS, cap);
+    }
+
+    if (loadedSuggestionCount < cap) {
+      while (
+        loadedSuggestionCount < cap &&
+        (index < loadedStartIndex ||
+          index >= loadedStartIndex + loadedSuggestionCount)
+      ) {
+        loadedSuggestionCount = Math.min(
+          loadedSuggestionCount + SUGGESTION_BATCH_SIZE,
+          cap,
+        );
+      }
+    }
+
+    const maxStart = Math.max(0, total - loadedSuggestionCount);
+    if (index < loadedStartIndex) {
+      loadedStartIndex = Math.max(0, index - WINDOW_EDGE_BUFFER);
+    } else if (index >= loadedStartIndex + loadedSuggestionCount) {
+      loadedStartIndex = Math.min(
+        maxStart,
+        index - loadedSuggestionCount + 1 + WINDOW_EDGE_BUFFER,
+      );
+    } else {
+      const lowerEdge = loadedStartIndex + WINDOW_EDGE_BUFFER;
+      const upperEdge =
+        loadedStartIndex + loadedSuggestionCount - 1 - WINDOW_EDGE_BUFFER;
+
+      if (index <= lowerEdge && loadedStartIndex > 0) {
+        loadedStartIndex = Math.max(0, index - WINDOW_EDGE_BUFFER);
+      } else if (index >= upperEdge && loadedStartIndex < maxStart) {
+        loadedStartIndex = Math.min(
+          maxStart,
+          index - loadedSuggestionCount + 1 + WINDOW_EDGE_BUFFER,
+        );
+      }
+    }
+
+    syncVisibleSuggestions();
+  }
+
+  function scrollSelectedSuggestionIntoView() {
+    if (!browser || selectedSuggestionIndex < 0) return;
+
+    setTimeout(() => {
+      const list = suggestionsListEl;
+      if (!list) return;
+
+      const selectedEl = list.querySelector(
+        `[data-suggestion-index="${selectedSuggestionIndex}"]`,
+      ) as HTMLElement | null;
+      selectedEl?.scrollIntoView({ block: "nearest" });
+    }, 0);
+  }
+
+  function moveSuggestionSelection(direction: 1 | -1) {
+    if (allSuggestions.length === 0) return;
+
+    if (selectedSuggestionIndex < 0) {
+      selectedSuggestionIndex = direction > 0 ? 0 : allSuggestions.length - 1;
+    } else {
+      selectedSuggestionIndex =
+        (selectedSuggestionIndex + direction + allSuggestions.length) %
+        allSuggestions.length;
+    }
+
+    ensureSuggestionLoaded(selectedSuggestionIndex);
+    scrollSelectedSuggestionIntoView();
+  }
+
+  function handleSuggestionsScroll() {
+    if (!suggestionsListEl) return;
+
+    const thresholdPx = 28;
+    const reachedBottom =
+      suggestionsListEl.scrollTop + suggestionsListEl.clientHeight >=
+      suggestionsListEl.scrollHeight - thresholdPx;
+    const reachedTop = suggestionsListEl.scrollTop <= thresholdPx;
+
+    if (reachedBottom) {
+      loadMoreSuggestions();
+      return;
+    }
+
+    if (reachedTop && loadedStartIndex > 0) {
+      loadedStartIndex = Math.max(0, loadedStartIndex - SUGGESTION_BATCH_SIZE);
+      syncVisibleSuggestions();
+    }
+  }
+
+  function getSuggestionHostname(rawUrl: string) {
+    const value = rawUrl.trim();
+    if (!value) return null;
+
+    try {
+      const maybeUrl = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value)
+        ? value
+        : `https://${value}`;
+      const parsed = new URL(maybeUrl);
+      return parsed.hostname || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function getSuggestionFavicon(rawUrl: string) {
+    const host = getSuggestionHostname(rawUrl);
+    if (!host) return null;
+    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=32`;
+  }
+
+  function getSuggestionUrlPreview(rawUrl: string) {
+    const host = getSuggestionHostname(rawUrl);
+    return host || rawUrl;
+  }
+
+  function getSuggestionVisitLabel(suggestion: Suggestion) {
+    if (suggestion.kind !== "history") return "";
+
+    if (suggestion.isPinned && suggestion.count >= 10) {
+      return ">10";
+    }
+
+    return String(suggestion.count);
+  }
+
+  function getSuggestionVisitTitle(suggestion: Suggestion) {
+    if (suggestion.kind !== "history") return "";
+
+    if (suggestion.isPinned && suggestion.count >= 10) {
+      return "Pinned match with boosted score (likely visited more than 10 times).";
+    }
+
+    return `Visited ${suggestion.count} ${suggestion.count === 1 ? "time" : "times"}`;
+  }
+
+  function getMathSuggestionForShortcut(): Suggestion | null {
+    if (!suggestionsVisible || allSuggestions.length === 0) return null;
+
+    if (selectedSuggestionIndex >= 0) {
+      const selectedSuggestion = allSuggestions[selectedSuggestionIndex];
+      if (selectedSuggestion?.kind === "math") {
+        return selectedSuggestion;
+      }
+    }
+
+    const firstSuggestion = allSuggestions[0];
+    if (firstSuggestion?.kind === "math") {
+      return firstSuggestion;
+    }
+
+    return null;
+  }
+
   function updateSuggestions(input: string) {
-    if (!input.trim()) {
+    const command = parseSearchCommand(input);
+    const effectiveInput = command ? command.query : input;
+    const trimmedInput = effectiveInput.trim();
+
+    if (!trimmedInput) {
+      allSuggestions = [];
+      loadedStartIndex = 0;
+      loadedSuggestionCount = 0;
       suggestions = [];
       suggestionsVisible = false;
       selectedSuggestionIndex = -1;
       return;
     }
 
-    const inputLower = input.toLowerCase();
+    const inputLower = trimmedInput.toLowerCase();
+    const localSuggestions: Suggestion[] = [];
+
+    const mathEvaluation = evaluateMathExpression(trimmedInput);
+    if (mathEvaluation.ok) {
+      localSuggestions.push({
+        kind: "math",
+        url: trimmedInput,
+        displayText: `${trimmedInput} = ${mathEvaluation.result}`,
+        count: 0,
+        mathResult: mathEvaluation.result,
+      });
+    }
 
     // Aggregate by URL/query, count occurrences and track most recent query
     const urlMap = new Map<
@@ -178,12 +425,14 @@ no description yet
       }
     });
 
-    // Sort by frequency (count) first, then by recency, limit to top 5
+    // Sort by frequency (count) first, then by recency.
     const sorted = Array.from(urlMap.entries())
       .map(([url, data]) => ({
+        kind: "history" as const,
         url,
         displayText: data.displayText,
         count: data.count,
+        isPinned: data.isPinned,
         lastTimestamp: data.lastTimestamp,
       }))
       .sort((a, b) => {
@@ -191,28 +440,44 @@ no description yet
         if (b.count !== a.count) return b.count - a.count;
         // Secondary sort: by recency
         return b.lastTimestamp - a.lastTimestamp;
-      })
-      .slice(0, 5);
+      });
 
-    suggestions = sorted;
-    suggestionsVisible = sorted.length > 0;
+    localSuggestions.push(...sorted);
+
+    allSuggestions = localSuggestions;
+    loadedStartIndex = 0;
+    loadedSuggestionCount = Math.min(INITIAL_VISIBLE_SUGGESTIONS, getLoadCap());
+    syncVisibleSuggestions();
     selectedSuggestionIndex = -1;
   }
-
-  // Debounced version of updateSuggestions for better performance
-  const debouncedUpdateSuggestions = debounce(updateSuggestions, 150);
 
   function handleInput() {
     // user manually edited the input -> exit history browsing mode
     historyPos = -1;
     originalTyped = "";
 
-    // Update autocomplete suggestions (debounced to avoid excessive computation)
-    debouncedUpdateSuggestions(query);
+    // Update autocomplete suggestions on every input change
+    updateSuggestions(query);
   }
 
-  function selectSuggestion(suggestion: Suggestion) {
+  async function selectSuggestion(suggestion: Suggestion) {
+    if (suggestion.kind === "math") {
+      if (suggestion.mathResult) {
+        await copyToClipboard(suggestion.mathResult);
+      }
+      allSuggestions = [];
+      loadedStartIndex = 0;
+      loadedSuggestionCount = 0;
+      suggestions = [];
+      suggestionsVisible = false;
+      selectedSuggestionIndex = -1;
+      return;
+    }
+
     query = suggestion.url;
+    allSuggestions = [];
+    loadedStartIndex = 0;
+    loadedSuggestionCount = 0;
     suggestions = [];
     suggestionsVisible = false;
     selectedSuggestionIndex = -1;
@@ -245,39 +510,62 @@ no description yet
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    if (!inputEl) return;
+
+    // Math copy shortcuts:
+    // Ctrl+C copies result, Ctrl+Shift+C copies "formula = result".
+    if (e.ctrlKey && e.key.toLowerCase() === "c") {
+      const hasSelection =
+        (inputEl.selectionStart ?? 0) !== (inputEl.selectionEnd ?? 0);
+      if (!hasSelection) {
+        const mathSuggestion = getMathSuggestionForShortcut();
+        if (mathSuggestion?.mathResult) {
+          e.preventDefault();
+          const copiedText = e.shiftKey
+            ? `${mathSuggestion.url} = ${mathSuggestion.mathResult}`
+            : mathSuggestion.mathResult;
+          void copyToClipboard(copiedText);
+          return;
+        }
+      }
+    }
+
     // Handle autocomplete navigation if suggestions are visible
-    if (suggestionsVisible && suggestions.length > 0) {
+    if (suggestionsVisible && allSuggestions.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        selectedSuggestionIndex =
-          selectedSuggestionIndex < suggestions.length - 1
-            ? selectedSuggestionIndex + 1
-            : selectedSuggestionIndex;
+        moveSuggestionSelection(1);
         return;
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
-        selectedSuggestionIndex =
-          selectedSuggestionIndex > 0 ? selectedSuggestionIndex - 1 : -1;
+        moveSuggestionSelection(-1);
         return;
       } else if (e.key === "Enter" && selectedSuggestionIndex >= 0) {
+        const selectedSuggestion = allSuggestions[selectedSuggestionIndex];
+        if (selectedSuggestion.kind === "math") {
+          // Let Enter perform the normal submit behavior for the current query.
+          return;
+        }
         e.preventDefault();
-        selectSuggestion(suggestions[selectedSuggestionIndex]);
+        void selectSuggestion(selectedSuggestion);
         return;
       } else if (e.key === "Escape") {
         e.preventDefault();
+        allSuggestions = [];
+        loadedStartIndex = 0;
+        loadedSuggestionCount = 0;
         suggestions = [];
         suggestionsVisible = false;
         selectedSuggestionIndex = -1;
         return;
-      } else if (e.key === "Tab" && selectedSuggestionIndex >= 0) {
+      } else if (e.key === "Tab") {
         e.preventDefault();
-        selectSuggestion(suggestions[selectedSuggestionIndex]);
+        moveSuggestionSelection(e.shiftKey ? -1 : 1);
         return;
       }
     }
 
     // handle arrow up/down for history navigation
-    if (!inputEl) return;
     const caret = inputEl.selectionStart ?? 0;
     if (e.key === "ArrowUp") {
       // If not already browsing history, only intercept when caret at start or input empty.
@@ -378,9 +666,37 @@ no description yet
 
   function submitForm(e: Event) {
     e.preventDefault();
-    const q = query;
-    const p = selected;
+    const command = parseSearchCommand(query);
+    const q = command ? command.query : query;
+
+    if (command?.providerId === "wiki") {
+      const wikiUrl = new URL("https://en.wikipedia.org/w/index.php");
+      wikiUrl.searchParams.set("search", q);
+
+      try {
+        addHistory({
+          type: "search",
+          provider: "wiki",
+          query: q,
+          url: wikiUrl.toString(),
+        });
+      } catch (e) {}
+
+      if (openNew) window.open(wikiUrl.toString(), "_blank");
+      else window.location.href = wikiUrl.toString();
+      return;
+    }
+
+    const p = command
+      ? orderedProviders.find(
+          (provider) => provider.id === command.providerId,
+        ) || selected
+      : selected;
     if (!p || !q.trim()) return;
+
+    if (command) {
+      selectedProviderId = p.id;
+    }
 
     // Helper: detect if the input looks like a URI
     function isLikelyURI(s: string) {
@@ -403,7 +719,7 @@ no description yet
     }
 
     // If the user entered a URI, go there directly regardless of provider
-    if (isLikelyURI(q)) {
+    if (!command && isLikelyURI(q)) {
       const urlStr = ensureUrl(q);
       try {
         addHistory({
@@ -546,32 +862,79 @@ no description yet
 
   <!-- Autocomplete suggestions dropdown - now directly below searchbar -->
   {#if suggestionsVisible && suggestions.length > 0}
-    <div class="suggestions-dropdown">
-      {#each suggestions as suggestion, idx}
-        <button
-          type="button"
-          class="suggestion-item"
-          class:selected={idx === selectedSuggestionIndex}
-          onclick={() => selectSuggestion(suggestion)}
-          onmouseenter={() => (selectedSuggestionIndex = idx)}
-        >
-          <i class="fa fa-history suggestion-icon" aria-hidden="true"></i>
-          <div class="suggestion-content">
-            <div class="suggestion-text">{suggestion.displayText}</div>
-            {#if suggestion.displayText !== suggestion.url}
-              <div class="suggestion-url">{suggestion.url}</div>
+    <div class="suggestions-dropdown" bind:this={suggestionsDropdownEl}>
+      <div
+        class="suggestions-list"
+        bind:this={suggestionsListEl}
+        onscroll={handleSuggestionsScroll}
+      >
+        {#each suggestions as suggestion, idx}
+          {@const globalIndex = loadedStartIndex + idx}
+          <button
+            type="button"
+            class="suggestion-item"
+            class:selected={globalIndex === selectedSuggestionIndex}
+            data-suggestion-index={globalIndex}
+            onclick={() => selectSuggestion(suggestion)}
+            onmouseenter={() => (selectedSuggestionIndex = globalIndex)}
+          >
+            {#if suggestion.kind === "math"}
+              <i class="fa fa-calculator suggestion-icon" aria-hidden="true"
+              ></i>
+            {:else}
+              {@const favicon = getSuggestionFavicon(suggestion.url)}
+              {#if favicon}
+                <img
+                  class="suggestion-favicon"
+                  src={favicon}
+                  alt=""
+                  loading="lazy"
+                  referrerpolicy="no-referrer"
+                  onerror={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display =
+                      "none";
+                  }}
+                />
+              {:else}
+                <i class="fa fa-history suggestion-icon" aria-hidden="true"></i>
+              {/if}
             {/if}
-          </div>
-          {#if suggestion.count > 1}
-            <span
-              class="suggestion-count"
-              title="Visited {suggestion.count} times"
-            >
-              {suggestion.count}×
-            </span>
-          {/if}
-        </button>
-      {/each}
+            <div class="suggestion-content">
+              <div class="suggestion-text">{suggestion.displayText}</div>
+              {#if suggestion.kind === "math"}
+                <div class="suggestion-subtext">
+                  Ctrl+C copy result, Ctrl+Shift+C copy formula = result
+                </div>
+              {/if}
+            </div>
+            <div class="suggestion-meta">
+              {#if suggestion.kind === "history"}
+                <span class="suggestion-url" title={suggestion.url}
+                  >{getSuggestionUrlPreview(suggestion.url)}</span
+                >
+                {#if suggestion.count > 1 || suggestion.isPinned}
+                  <span
+                    class="suggestion-count"
+                    title={getSuggestionVisitTitle(suggestion)}
+                  >
+                    {getSuggestionVisitLabel(suggestion)}
+                  </span>
+                {/if}
+              {/if}
+            </div>
+          </button>
+        {/each}
+      </div>
+
+      <div class="suggestions-footer" aria-live="polite">
+        <span class="footer-highlighted">
+          {selectedSuggestionIndex >= 0
+            ? `${selectedSuggestionIndex + 1}/${allSuggestions.length} highlighted`
+            : `0/${allSuggestions.length} highlighted`}
+        </span>
+        <span class="footer-separator">•</span>
+        <span>{loadedSuggestionCount}/{allSuggestions.length} loaded</span>
+      </div>
     </div>
   {/if}
 </form>
@@ -768,9 +1131,18 @@ no description yet
     border: 1px solid rgba(0, 0, 0, 0.08);
     border-radius: 0.75rem;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    max-height: 300px;
-    overflow-y: auto;
+    max-height: 14.5rem;
+    overflow: hidden;
     z-index: 1000;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .suggestions-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-bottom: 0.25rem;
   }
 
   .suggestion-item {
@@ -778,17 +1150,18 @@ no description yet
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    padding: 0.75rem 2rem;
+    padding: 0.7rem 1rem;
     background: transparent;
     border: none;
     cursor: pointer;
     text-align: left;
     transition: background 0.15s ease;
+    scroll-margin-bottom: 3.4rem;
   }
 
   .suggestion-item:hover,
   .suggestion-item.selected {
-    background: rgba(0, 0, 0, 0.05);
+    background: rgba(255, 255, 255, 0.22);
   }
 
   .suggestion-item:not(:last-child) {
@@ -799,12 +1172,16 @@ no description yet
     color: var(--placeholder, #999);
     font-size: 0.9rem;
     flex-shrink: 0;
+    width: 1rem;
+    text-align: center;
   }
 
   .suggestion-content {
-    flex: 1;
     min-width: 0;
-    overflow: hidden;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
   }
 
   .suggestion-text {
@@ -815,19 +1192,68 @@ no description yet
     text-overflow: ellipsis;
   }
 
+  .suggestion-favicon {
+    width: 1rem;
+    height: 1rem;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  .suggestion-meta {
+    margin-left: auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    max-width: 45%;
+  }
+
   .suggestion-url {
     font-size: 0.85rem;
     color: var(--placeholder, #999);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    margin-top: 0.15rem;
+    max-width: 100%;
+  }
+
+  .suggestion-subtext {
+    font-size: 0.8rem;
+    color: var(--placeholder, #999);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .suggestion-count {
-    color: var(--placeholder, #999);
+    color: var(--text, #333);
+    background: rgba(255, 255, 255, 0.4);
+    border-radius: 999px;
+    padding: 0.1rem 0.45rem;
     font-size: 0.85rem;
     font-weight: 500;
     flex-shrink: 0;
+  }
+
+  .suggestions-footer {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.55rem 1rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(16, 20, 26, 0.96);
+    backdrop-filter: blur(6px);
+    font-size: 0.78rem;
+    color: var(--placeholder, #bcc6cf);
+  }
+
+  .footer-highlighted {
+    color: var(--dark-400, #0d6efd);
+    font-weight: 600;
+  }
+
+  .footer-separator {
+    opacity: 0.6;
   }
 </style>

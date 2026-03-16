@@ -212,6 +212,75 @@ It will also provide a reset, import, and export functionality for user settings
     settings.update((s) => ({ ...s, enableHistory: !s.enableHistory }));
   }
 
+  function toggleSystemInfo() {
+    settings.update((s) => ({ ...s, enableSystemInfo: !s.enableSystemInfo }));
+  }
+
+  type SystemSettingKey =
+    | "showSystemPublicIp"
+    | "showSystemConnection"
+    | "showSystemMemory"
+    | "showSystemBattery"
+    | "showSystemTime"
+    | "showSystemTimezone"
+    | "showSystemLanguage"
+    | "showSystemCpuCores"
+    | "showInfoDate"
+    | "showInfoWeather"
+    | "showInfoAirQuality";
+
+  type CollapsedVisibleKey =
+    | "public_ip"
+    | "connection"
+    | "device_memory"
+    | "battery"
+    | "language"
+    | "cpu_cores"
+    | "date"
+    | "time"
+    | "timezone"
+    | "weather"
+    | "air_quality";
+
+  const collapsedValueOptions: Array<{
+    key: CollapsedVisibleKey;
+    label: string;
+  }> = [
+    { key: "public_ip", label: "Public IP" },
+    { key: "connection", label: "Connection" },
+    { key: "device_memory", label: "Device Memory" },
+    { key: "battery", label: "Battery" },
+    { key: "language", label: "Language" },
+    { key: "cpu_cores", label: "CPU Cores" },
+    { key: "date", label: "Date" },
+    { key: "time", label: "Time" },
+    { key: "timezone", label: "Timezone" },
+    { key: "weather", label: "Weather" },
+    { key: "air_quality", label: "Air Quality" },
+  ];
+
+  function toggleSystemSetting(key: SystemSettingKey) {
+    settings.update((s) => ({ ...s, [key]: !(s[key] ?? true) }));
+  }
+
+  function toggleInfoCollapsed() {
+    settings.update((s) => ({
+      ...s,
+      infoCollapsed: !(s.infoCollapsed ?? true),
+    }));
+  }
+
+  function toggleCollapsedVisibleKey(key: CollapsedVisibleKey) {
+    settings.update((s) => {
+      const current = s.infoCollapsedVisibleKeys ?? [];
+      const exists = current.includes(key);
+      const next = exists
+        ? current.filter((k) => k !== key)
+        : [...current, key];
+      return { ...s, infoCollapsedVisibleKeys: next };
+    });
+  }
+
   function toggleTranslateInHistory() {
     settings.update((s) => ({
       ...s,
@@ -499,7 +568,7 @@ It will also provide a reset, import, and export functionality for user settings
           <label for="default-to">Default "To" language:</label>
           <select
             id="default-to"
-            value={$settings.defaultTranslateTo ?? "en"}
+            value={$settings.defaultTranslateTo ?? "nl"}
             onchange={(e) => updateDefaultTranslateTo(e.currentTarget.value)}
           >
             {#each availableLanguages as lang}
@@ -539,6 +608,168 @@ It will also provide a reset, import, and export functionality for user settings
           />
           Include translations in history
         </label>
+      </div>
+    {/if}
+
+    <hr class="section-sep" />
+
+    <!-- Info Widget Settings -->
+    <h4 class="section-title">Info Widget</h4>
+    <div class="toggle-option">
+      <label>
+        <input
+          type="checkbox"
+          checked={$settings.enableSystemInfo ?? true}
+          onchange={toggleSystemInfo}
+        />
+        Show info widget above pinned sites
+      </label>
+    </div>
+
+    {#if $settings.enableSystemInfo ?? true}
+      <div class="system-info-settings">
+        <div class="toggle-option">
+          <label>
+            <input
+              type="checkbox"
+              checked={$settings.showSystemPublicIp ?? true}
+              onchange={() => toggleSystemSetting("showSystemPublicIp")}
+            />
+            Public IP
+          </label>
+        </div>
+        <div class="toggle-option">
+          <label>
+            <input
+              type="checkbox"
+              checked={$settings.showSystemTime ?? true}
+              onchange={() => toggleSystemSetting("showSystemTime")}
+            />
+            Time
+          </label>
+        </div>
+        <div class="toggle-option">
+          <label>
+            <input
+              type="checkbox"
+              checked={$settings.showInfoDate ?? true}
+              onchange={() => toggleSystemSetting("showInfoDate")}
+            />
+            Date
+          </label>
+        </div>
+        <div class="toggle-option">
+          <label>
+            <input
+              type="checkbox"
+              checked={$settings.showSystemTimezone ?? true}
+              onchange={() => toggleSystemSetting("showSystemTimezone")}
+            />
+            Timezone
+          </label>
+        </div>
+        <div class="toggle-option">
+          <label>
+            <input
+              type="checkbox"
+              checked={$settings.showSystemLanguage ?? true}
+              onchange={() => toggleSystemSetting("showSystemLanguage")}
+            />
+            Language
+          </label>
+        </div>
+        <div class="toggle-option">
+          <label>
+            <input
+              type="checkbox"
+              checked={$settings.showSystemConnection ?? true}
+              onchange={() => toggleSystemSetting("showSystemConnection")}
+            />
+            Connection Type/Speed
+          </label>
+        </div>
+        <div class="toggle-option">
+          <label>
+            <input
+              type="checkbox"
+              checked={$settings.showSystemMemory ?? true}
+              onchange={() => toggleSystemSetting("showSystemMemory")}
+            />
+            Device Memory
+          </label>
+        </div>
+        <div class="toggle-option">
+          <label>
+            <input
+              type="checkbox"
+              checked={$settings.showSystemBattery ?? true}
+              onchange={() => toggleSystemSetting("showSystemBattery")}
+            />
+            Battery Status
+          </label>
+        </div>
+        <div class="toggle-option">
+          <label>
+            <input
+              type="checkbox"
+              checked={$settings.showInfoWeather ?? true}
+              onchange={() => toggleSystemSetting("showInfoWeather")}
+            />
+            Weather
+          </label>
+        </div>
+        <div class="toggle-option">
+          <label>
+            <input
+              type="checkbox"
+              checked={$settings.showInfoAirQuality ?? true}
+              onchange={() => toggleSystemSetting("showInfoAirQuality")}
+            />
+            Air Quality
+          </label>
+        </div>
+        <div class="toggle-option">
+          <label>
+            <input
+              type="checkbox"
+              checked={$settings.showSystemCpuCores ?? true}
+              onchange={() => toggleSystemSetting("showSystemCpuCores")}
+            />
+            CPU Cores
+          </label>
+        </div>
+      </div>
+
+      <div
+        class="toggle-option"
+        style="margin-left: 1.5rem; margin-top: 0.5rem;"
+      >
+        <label>
+          <input
+            type="checkbox"
+            checked={$settings.infoCollapsed ?? true}
+            onchange={toggleInfoCollapsed}
+          />
+          Start with info widget collapsed
+        </label>
+      </div>
+
+      <div class="collapsed-visibility-settings">
+        <p class="collapsed-visibility-title">Visible values when collapsed:</p>
+        <div class="collapsed-visibility-grid">
+          {#each collapsedValueOptions as opt}
+            <label class="collapsed-visibility-option">
+              <input
+                type="checkbox"
+                checked={($settings.infoCollapsedVisibleKeys ?? []).includes(
+                  opt.key,
+                )}
+                onchange={() => toggleCollapsedVisibleKey(opt.key)}
+              />
+              {opt.label}
+            </label>
+          {/each}
+        </div>
       </div>
     {/if}
 
@@ -754,6 +985,47 @@ It will also provide a reset, import, and export functionality for user settings
 
   .translator-settings {
     margin: 0.5rem 0 0 1.5rem;
+  }
+
+  .system-info-settings {
+    margin: 0.5rem 0 0 1.5rem;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.25rem 0.75rem;
+  }
+
+  .collapsed-visibility-settings {
+    margin: 0.4rem 0 0 1.5rem;
+  }
+
+  .collapsed-visibility-title {
+    margin: 0.25rem 0;
+    font-size: 0.86rem;
+    opacity: 0.85;
+  }
+
+  .collapsed-visibility-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.2rem 0.75rem;
+  }
+
+  .collapsed-visibility-option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+
+  @media (max-width: 900px) {
+    .system-info-settings {
+      grid-template-columns: 1fr;
+    }
+
+    .collapsed-visibility-grid {
+      grid-template-columns: 1fr;
+    }
   }
 
   /* Provider reorder list */

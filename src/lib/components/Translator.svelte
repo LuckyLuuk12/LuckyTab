@@ -68,9 +68,17 @@
   function swap() {
     const f = fromLang;
     const t = toLang;
-    // swap and ensure that one side is nl by default if auto
-    fromLang = t === "nl" ? "auto" : t;
-    toLang = f === "auto" ? "nl" : f;
+
+    // When swapping from auto-detect, use a concrete source language and pick
+    // Dutch/English fallback for target based on the current target language.
+    if (f === "auto") {
+      fromLang = t;
+      toLang = t === "nl" ? "en" : "nl";
+      return;
+    }
+
+    fromLang = t;
+    toLang = f;
   }
 </script>
 
