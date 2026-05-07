@@ -2,16 +2,15 @@
   This is a single-page Svelte project that serves as my custom new tab page.
 -->
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { goto } from "$app/navigation";
   import { browser } from "$app/environment";
+  import favicon from "$lib/assets/favicon.png";
+  import History from "$lib/components/History.svelte";
+  import PinnedSites from "$lib/components/PinnedSites.svelte";
   import SearchBar from "$lib/components/SearchBar.svelte";
   import SystemInfo from "$lib/components/SystemInfo.svelte";
-  import PinnedSites from "$lib/components/PinnedSites.svelte";
   import Translator from "$lib/components/Translator.svelte";
-  import History from "$lib/components/History.svelte";
   import { settings } from "$lib/stores";
-  import favicon from "$lib/assets/favicon.png";
+  import { onMount } from "svelte";
 
   // Focus the search input on mount
   let searchInput: HTMLInputElement | null = null;
@@ -245,6 +244,9 @@
 </main>
 
 <style>
+  :global(.hollow) {
+    border: none !important;
+  }
   :global(*:not(.fa)) {
     font-family: Arial, Helvetica, sans-serif !important;
   }

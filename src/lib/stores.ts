@@ -1,6 +1,6 @@
 import { browser } from '$app/environment';
-import { writable, get } from 'svelte/store';
 import type { PinnedSite, Settings } from '$lib/types';
+import { get, writable } from 'svelte/store';
 
 const LOCAL_KEY_SETTINGS = 'lt:settings:v1';
 

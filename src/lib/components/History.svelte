@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { settings, clearHistory } from "$lib/stores";
+  import { clearHistory, settings } from "$lib/stores";
 
   function humanTime(t: number) {
     const d = new Date(t);

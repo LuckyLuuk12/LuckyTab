@@ -2,12 +2,12 @@
 no description yet
 -->
 <script lang="ts">
-  import { onMount } from "svelte";
   import { browser } from "$app/environment";
-  import { addHistory, settings, setProviderOrder } from "$lib/stores";
   import { DEFAULT_PINNED_SITES } from "$lib/constants";
-  import { DEFAULT_PROVIDERS, type Provider } from "$lib/providerConfig";
   import { evaluateMathExpression } from "$lib/math";
+  import { DEFAULT_PROVIDERS, type Provider } from "$lib/providerConfig";
+  import { addHistory, setProviderOrder, settings } from "$lib/stores";
+  import { onMount } from "svelte";
 
   const providers = DEFAULT_PROVIDERS;
 

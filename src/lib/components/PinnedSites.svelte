@@ -13,11 +13,8 @@
 no description yet
 -->
 <script lang="ts">
-  import { settings } from "$lib/stores";
-  import type { PinnedSite } from "$lib/types";
-  import { browser } from "$app/environment";
-  import { get } from "svelte/store";
   import { DEFAULT_PINNED_SITES } from "$lib/constants";
+  import { settings } from "$lib/stores";
 </script>
 
 <section>

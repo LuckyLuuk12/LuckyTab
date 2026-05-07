@@ -4,9 +4,9 @@ Rows with unknown values are hidden and reasons are logged to the console.
 Users can reorder rows via drag-and-drop; order persists via settings.
 -->
 <script lang="ts">
-  import { onMount } from "svelte";
   import { browser } from "$app/environment";
   import { settings } from "$lib/stores";
+  import { onMount } from "svelte";
 
   type InfoRow = {
     key: string;

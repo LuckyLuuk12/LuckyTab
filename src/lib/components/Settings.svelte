@@ -5,24 +5,20 @@ custom css injection, and customizing pinned links.
 It will also provide a reset, import, and export functionality for user settings.
 -->
 <script lang="ts">
-  import { onMount } from "svelte";
   import { browser } from "$app/environment";
-  import {
-    settings,
-    setCustomCss,
-    clearAllSettings,
-    addPinned,
-    updatePinned,
-    removePinned,
-    setProviderOrder,
-  } from "$lib/stores";
   import { DEFAULT_PINNED_SITES } from "$lib/constants";
+  import { DEFAULT_PROVIDERS, type Provider } from "$lib/providerConfig";
   import {
-    DEFAULT_PROVIDERS,
-    PROVIDER_ICONS,
-    type Provider,
-  } from "$lib/providerConfig";
+    addPinned,
+    clearAllSettings,
+    removePinned,
+    setCustomCss,
+    setProviderOrder,
+    settings,
+    updatePinned,
+  } from "$lib/stores";
   import type { PinnedSite } from "$lib/types";
+  import { onMount } from "svelte";
 
   const providers = DEFAULT_PROVIDERS;
 
