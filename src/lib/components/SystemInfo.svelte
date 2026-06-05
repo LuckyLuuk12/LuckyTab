@@ -59,6 +59,9 @@ Users can reorder rows via drag-and-drop; order persists via settings.
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
+  const GEO_DENY_COOKIE = "luckytab_geo_denied";
+  const GEO_DENY_TTL = 60 * 60 * 24;
+
   function toYamlScalar(value: string) {
     const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
     return `"${escaped}"`;
@@ -230,10 +233,47 @@ Users can reorder rows via drag-and-drop; order persists via settings.
     }
   }
 
+  function getCookie(name: string): string | null {
+    if (!browser) return null;
+
+    const prefix = `${name}=`;
+    const entries = document.cookie ? document.cookie.split("; ") : [];
+    for (const entry of entries) {
+      if (entry.startsWith(prefix)) {
+        return decodeURIComponent(entry.slice(prefix.length));
+      }
+    }
+
+    return null;
+  }
+
+  function setCookie(name: string, value: string, maxAgeSeconds: number): void {
+    if (!browser) return;
+    document.cookie = `${name}=${encodeURIComponent(value)}; Max-Age=${maxAgeSeconds}; Path=/; SameSite=Lax`;
+  }
+
+  function clearCookie(name: string): void {
+    if (!browser) return;
+    document.cookie = `${name}=; Max-Age=0; Path=/; SameSite=Lax`;
+  }
+
+  function markLocationDenied(): void {
+    setCookie(GEO_DENY_COOKIE, "1", GEO_DENY_TTL);
+  }
+
+  function isLocationDenied(): boolean {
+    return getCookie(GEO_DENY_COOKIE) === "1";
+  }
+
+  function clearLocationDenied(): void {
+    clearCookie(GEO_DENY_COOKIE);
+  }
+
   function clearLocationCache(): void {
     if (!browser) return;
     try {
       localStorage.removeItem("luckytab_geo");
+      clearLocationDenied();
       console.log(
         "[Geolocation] Cache cleared. Reload to request fresh position.",
       );
@@ -257,6 +297,13 @@ Users can reorder rows via drag-and-drop; order persists via settings.
       return cached;
     }
 
+    if (isLocationDenied()) {
+      console.log("[Geolocation] Skipped: recent denial cookie active");
+      weatherReason = "Geolocation recently denied";
+      airQualityReason = "Geolocation recently denied";
+      return null;
+    }
+
     console.log("[Geolocation] Requesting fresh position...");
 
     return new Promise<{ lat: number; lon: number } | null>((resolve) => {
@@ -273,6 +320,7 @@ Users can reorder rows via drag-and-drop; order persists via settings.
           const geo = { lat: pos.coords.latitude, lon: pos.coords.longitude };
           console.log("[Geolocation] ✓ Success:", geo);
           cacheLocation(geo);
+          clearLocationDenied();
           // Clear error reasons on success
           weatherReason = "Weather request still loading";
           airQualityReason = "Air quality request still loading";
@@ -287,6 +335,9 @@ Users can reorder rows via drag-and-drop; order persists via settings.
           };
           const errCode = errCodes[err.code] || `UNKNOWN(${err.code})`;
           console.warn(`[Geolocation] ✗ Error ${errCode}: ${err.message}`);
+          if (err.code === 1) {
+            markLocationDenied();
+          }
           weatherReason = `Geolocation error: ${err.message}`;
           airQualityReason = `Geolocation error: ${err.message}`;
           resolve(null);
