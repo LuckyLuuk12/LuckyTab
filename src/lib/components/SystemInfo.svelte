@@ -202,20 +202,96 @@ Users can reorder rows via drag-and-drop; order persists via settings.
     return "Unknown";
   }
 
+  function getCachedLocation(): { lat: number; lon: number } | null {
+    if (!browser) return null;
+    try {
+      const cached = localStorage.getItem("luckytab_geo");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (
+          typeof parsed?.lat === "number" &&
+          typeof parsed?.lon === "number"
+        ) {
+          return parsed;
+        }
+      }
+    } catch {
+      // Ignore parse errors
+    }
+    return null;
+  }
+
+  function cacheLocation(geo: { lat: number; lon: number }): void {
+    if (!browser) return;
+    try {
+      localStorage.setItem("luckytab_geo", JSON.stringify(geo));
+    } catch {
+      // Ignore storage errors (quota, blocked, etc)
+    }
+  }
+
+  function clearLocationCache(): void {
+    if (!browser) return;
+    try {
+      localStorage.removeItem("luckytab_geo");
+      console.log(
+        "[Geolocation] Cache cleared. Reload to request fresh position.",
+      );
+    } catch {
+      // Ignore
+    }
+  }
+
+  // Expose for debugging (open console and call window.clearGeoCache())
+  if (browser) {
+    (window as any).clearGeoCache = clearLocationCache;
+  }
+
   async function resolveLocation() {
     if (!browser || !navigator.geolocation) return null;
 
+    // Check cache first
+    const cached = getCachedLocation();
+    if (cached) {
+      console.log("[Geolocation] Using cached position:", cached);
+      return cached;
+    }
+
+    console.log("[Geolocation] Requesting fresh position...");
+
     return new Promise<{ lat: number; lon: number } | null>((resolve) => {
+      const timeoutId = setTimeout(() => {
+        console.warn("[Geolocation] Request timeout after 15s");
+        weatherReason = "Geolocation request timed out";
+        airQualityReason = "Geolocation request timed out";
+        resolve(null);
+      }, 15000);
+
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+          clearTimeout(timeoutId);
+          const geo = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+          console.log("[Geolocation] ✓ Success:", geo);
+          cacheLocation(geo);
+          // Clear error reasons on success
+          weatherReason = "Weather request still loading";
+          airQualityReason = "Air quality request still loading";
+          resolve(geo);
         },
         (err) => {
+          clearTimeout(timeoutId);
+          const errCodes: Record<number, string> = {
+            1: "PERMISSION_DENIED",
+            2: "POSITION_UNAVAILABLE",
+            3: "TIMEOUT",
+          };
+          const errCode = errCodes[err.code] || `UNKNOWN(${err.code})`;
+          console.warn(`[Geolocation] ✗ Error ${errCode}: ${err.message}`);
           weatherReason = `Geolocation error: ${err.message}`;
           airQualityReason = `Geolocation error: ${err.message}`;
           resolve(null);
         },
-        { enableHighAccuracy: false, timeout: 5000, maximumAge: 5 * 60 * 1000 },
+        { enableHighAccuracy: false, timeout: 10000, maximumAge: Infinity },
       );
     });
   }
