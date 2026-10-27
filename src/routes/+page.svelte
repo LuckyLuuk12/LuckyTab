@@ -480,6 +480,14 @@
 </main>
 
 <style>
+  :global(html),
+  :global(body) {
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+    overflow: hidden;
+  }
+
   :global(.hollow) {
     border: none !important;
   }
@@ -658,6 +666,7 @@
     height: 100dvh;
     max-width: 100%;
     max-height: 100%;
+    min-height: 0;
     display: flex;
     flex-direction: row;
     gap: 2rem;
@@ -865,6 +874,7 @@
     .sidebar {
       position: relative;
       flex: 0 1 18vw;
+      height: 100%;
       max-width: 18vw;
       box-shadow: none;
     }
