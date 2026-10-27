@@ -1,32 +1,29 @@
-<!-- @component
-no description yet
--->
 <script lang="ts">
   import { browser } from "$app/environment";
   import { DEFAULT_PINNED_SITES } from "$lib/constants";
   import { evaluateMathExpression } from "$lib/math";
   import { DEFAULT_PROVIDERS, type Provider } from "$lib/providerConfig";
   import { addHistory, setProviderOrder, settings } from "$lib/stores";
+  import type { HistoryEntry } from "$lib/types";
   import { onMount } from "svelte";
-
   const providers = DEFAULT_PROVIDERS;
-
   // Svelte 5 runes for local reactive state
   let selectedProviderId = $state("google"); // Track provider by ID instead of index
   let query = $state("");
   let openNew = $state(false);
   let providersVisible = $state(false);
-
   // Drag-n-drop state
   let draggedIndex = $state<number | null>(null);
-
   // Track if component has mounted to avoid hydration mismatch
   let mounted = $state(false);
-
   // URL safety check state
   let safetyCheckPending = $state(false);
-  let blockedUrlInfo = $state<{ url: string; rating: string } | null>(null);
-  let skippedUrlInfo = $state<{ url: string } | null>(null);
+  let blockedUrlInfo = $state<{
+    url: string;
+    query: string;
+    rating: string;
+  } | null>(null);
+  let skippedUrlInfo = $state<{ url: string; query: string } | null>(null);
   let urlSafetyIndicator = $state<{
     status: "checking" | "safe" | "unsafe" | "unknown";
     url: string;
@@ -35,7 +32,6 @@ no description yet
   let urlSafetyPreviewVersion = 0;
   let lastPreviewCheckedUrl = $state<string | null>(null);
   let lastPreviewApiKey = $state("");
-
   // Ordered providers based on settings (or default order)
   // Only apply custom order after mounting to avoid SSR/client mismatch
   let orderedProviders = $derived.by(() => {
@@ -43,25 +39,20 @@ no description yet
     if (!mounted || !browser) {
       return providers;
     }
-
     const savedOrder = $settings.providerOrder;
     if (!savedOrder || savedOrder.length === 0) {
       return providers; // Use default order
     }
-
     // Reorder providers based on saved order
     const ordered = savedOrder
       .map((id) => providers.find((p) => p.id === id))
       .filter((p): p is Provider => p !== undefined);
-
     // Add any new providers not in saved order (for backwards compatibility)
     const missingProviders = providers.filter(
       (p) => !savedOrder.includes(p.id),
     );
-
     return [...ordered, ...missingProviders];
   });
-
   // Derive index and selection from the provider ID
   let selectedIndex = $derived(
     orderedProviders.findIndex((p) => p.id === selectedProviderId),
@@ -70,41 +61,52 @@ no description yet
     orderedProviders.find((p) => p.id === selectedProviderId) ||
       orderedProviders[0],
   );
-
   // Autocomplete suggestions
-  type SuggestionKind = "history" | "math";
+  type SuggestionKind = "history" | "math" | "command";
   type Suggestion = {
     kind: SuggestionKind;
     url: string;
+    query?: string;
+    provider?: string;
     displayText: string;
     count: number;
     isPinned?: boolean;
     mathResult?: string;
   };
+  const searchCommands = [
+    { prefix: "yt", providerId: "youtube", label: "YouTube" },
+    { prefix: "maps", providerId: "googlemaps", label: "Google Maps" },
+    { prefix: "aks", providerId: "allkeyshop", label: "AllKeyShop" },
+    { prefix: "wiki", providerId: "wiki", label: "Wikipedia" },
+  ] as const;
+  type HistorySelectDetail = {
+    type: HistoryEntry["type"];
+    query?: string;
+    url?: string;
+    provider?: string;
+    from?: string;
+    to?: string;
+    result?: string;
+  };
   const INITIAL_VISIBLE_SUGGESTIONS = 5;
   const SUGGESTION_BATCH_SIZE = 5;
   const MAX_LOADED_SUGGESTIONS = 20;
   const WINDOW_EDGE_BUFFER = 4;
-
   let allSuggestions = $state<Suggestion[]>([]);
   let suggestions = $state<Suggestion[]>([]);
   let suggestionsVisible = $state(false);
   let selectedSuggestionIndex = $state(-1);
   let loadedStartIndex = $state(0);
   let loadedSuggestionCount = $state(0);
-
   let suggestionsDropdownEl = $state<HTMLDivElement | null>(null);
   let suggestionsListEl = $state<HTMLDivElement | null>(null);
-
   let inputEl = $state<HTMLInputElement | null>(null);
   // history browsing state
-  let historyList = $state<Array<any>>([]);
+  let historyList = $state<HistoryEntry[]>([]);
   let historyPos = $state(-1); // -1 = not browsing, 0 = most recent
   let originalTyped = $state("");
-
   // Debounce for scroll events
   let lastScrollTime = $state(0);
-
   // keep a local filtered history (search/visit entries only)
   // Use $effect to reactively update when settings change
   $effect(() => {
@@ -115,32 +117,26 @@ no description yet
     historyPos = -1;
     originalTyped = "";
   });
-
   // Debounced URL safety preview while typing direct URLs.
   $effect(() => {
     const previewUrl = getPreviewUrl(query);
     const apiKey = $settings.safeBrowsingApiKey?.trim() ?? "";
-
     if (!previewUrl || safetyCheckPending) {
       urlSafetyIndicator = null;
       return;
     }
-
     // Prevent repeated checks when focus/blur or unrelated state updates rerun this effect.
     if (previewUrl === lastPreviewCheckedUrl && apiKey === lastPreviewApiKey) {
       return;
     }
-
     const thisRun = ++urlSafetyPreviewVersion;
     const timeoutId = setTimeout(async () => {
       if (thisRun !== urlSafetyPreviewVersion) return;
       urlSafetyIndicator = { status: "checking", url: previewUrl };
       const { verdict, rating } = await checkUrlSafety(previewUrl);
       if (thisRun !== urlSafetyPreviewVersion) return;
-
       lastPreviewCheckedUrl = previewUrl;
       lastPreviewApiKey = apiKey;
-
       if (verdict === "safe") {
         urlSafetyIndicator = {
           status: "safe",
@@ -160,29 +156,48 @@ no description yet
         };
       }
     }, 1200);
-
     return () => {
       clearTimeout(timeoutId);
       urlSafetyPreviewVersion++;
     };
   });
-
   onMount(() => {
     mounted = true;
-    if (browser && inputEl) inputEl.focus();
+    if (!browser) return;
+    inputEl?.focus();
+    const handleHistorySelect = (event: Event) => {
+      const detail = (event as CustomEvent<HistorySelectDetail>).detail;
+      if (!detail || (detail.type !== "search" && detail.type !== "visit"))
+        return;
+      // Restore the original query; the URL is only a fallback for old entries.
+      query = detail.query ?? detail.url ?? "";
+      if (
+        detail.provider &&
+        orderedProviders.some((provider) => provider.id === detail.provider)
+      ) {
+        selectedProviderId = detail.provider;
+      }
+      historyPos = -1;
+      originalTyped = "";
+      blockedUrlInfo = null;
+      skippedUrlInfo = null;
+      clearSuggestions();
+      inputEl?.focus();
+      inputEl?.setSelectionRange(query.length, query.length);
+    };
+    window.addEventListener("lt:history-select", handleHistorySelect);
+    return () =>
+      window.removeEventListener("lt:history-select", handleHistorySelect);
   });
-
   function parseSearchCommand(input: string): {
     providerId: Provider["id"] | "wiki";
     query: string;
   } | null {
     const match = input.trimStart().match(/^(yt|maps|aks|wiki)\s+(.+)$/i);
     if (!match) return null;
-
     const command = match[1].toLowerCase();
     const commandQuery = match[2].trim();
     if (!commandQuery) return null;
-
     if (command === "yt") return { providerId: "youtube", query: commandQuery };
     if (command === "maps") {
       return { providerId: "googlemaps", query: commandQuery };
@@ -191,10 +206,13 @@ no description yet
       return { providerId: "allkeyshop", query: commandQuery };
     }
     if (command === "wiki") return { providerId: "wiki", query: commandQuery };
-
     return null;
   }
-
+  function getCommandPrefix(input: string) {
+    const prefix = input.trimStart().toLowerCase();
+    if (!prefix || prefix.includes(" ")) return null;
+    return searchCommands.find((command) => command.prefix.startsWith(prefix));
+  }
   function isLikelyURI(s: string) {
     const t = s.trim();
     if (!t) return false;
@@ -207,19 +225,16 @@ no description yet
     if (/\./.test(t)) return true;
     return false;
   }
-
   function ensureUrl(s: string) {
     const t = s.trim();
     if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(t)) return t;
     return `https://${t}`;
   }
-
   function getPreviewUrl(input: string) {
     if (parseSearchCommand(input)) return null;
     if (!isLikelyURI(input)) return null;
     return ensureUrl(input);
   }
-
   function getUrlSafetyIndicatorTitle() {
     if (!urlSafetyIndicator) return "";
     if (urlSafetyIndicator.status === "checking") return "Checking site...";
@@ -227,7 +242,6 @@ no description yet
     if (urlSafetyIndicator.status === "unsafe") return "Unsafe site";
     return "Unknown risk";
   }
-
   async function copyToClipboard(text: string) {
     if (!browser || !navigator?.clipboard) return false;
     try {
@@ -237,11 +251,9 @@ no description yet
       return false;
     }
   }
-
   function getLoadCap() {
     return Math.min(MAX_LOADED_SUGGESTIONS, allSuggestions.length);
   }
-
   function syncVisibleSuggestions() {
     suggestions = allSuggestions.slice(
       loadedStartIndex,
@@ -249,34 +261,27 @@ no description yet
     );
     suggestionsVisible = suggestions.length > 0;
   }
-
   function loadMoreSuggestions(batchSize = SUGGESTION_BATCH_SIZE) {
     const cap = getLoadCap();
     if (allSuggestions.length === 0) return false;
-
     if (loadedSuggestionCount < cap) {
       loadedSuggestionCount = Math.min(loadedSuggestionCount + batchSize, cap);
       syncVisibleSuggestions();
       return true;
     }
-
     const maxStart = Math.max(0, allSuggestions.length - loadedSuggestionCount);
     if (loadedStartIndex >= maxStart) return false;
-
     loadedStartIndex = Math.min(loadedStartIndex + batchSize, maxStart);
     syncVisibleSuggestions();
     return true;
   }
-
   function ensureSuggestionLoaded(index: number) {
     const total = allSuggestions.length;
     if (index < 0 || total === 0) return;
-
     const cap = getLoadCap();
     if (loadedSuggestionCount === 0) {
       loadedSuggestionCount = Math.min(INITIAL_VISIBLE_SUGGESTIONS, cap);
     }
-
     if (loadedSuggestionCount < cap) {
       while (
         loadedSuggestionCount < cap &&
@@ -289,7 +294,6 @@ no description yet
         );
       }
     }
-
     const maxStart = Math.max(0, total - loadedSuggestionCount);
     if (index < loadedStartIndex) {
       loadedStartIndex = Math.max(0, index - WINDOW_EDGE_BUFFER);
@@ -302,7 +306,6 @@ no description yet
       const lowerEdge = loadedStartIndex + WINDOW_EDGE_BUFFER;
       const upperEdge =
         loadedStartIndex + loadedSuggestionCount - 1 - WINDOW_EDGE_BUFFER;
-
       if (index <= lowerEdge && loadedStartIndex > 0) {
         loadedStartIndex = Math.max(0, index - WINDOW_EDGE_BUFFER);
       } else if (index >= upperEdge && loadedStartIndex < maxStart) {
@@ -312,27 +315,21 @@ no description yet
         );
       }
     }
-
     syncVisibleSuggestions();
   }
-
   function scrollSelectedSuggestionIntoView() {
     if (!browser || selectedSuggestionIndex < 0) return;
-
     setTimeout(() => {
       const list = suggestionsListEl;
       if (!list) return;
-
       const selectedEl = list.querySelector(
         `[data-suggestion-index="${selectedSuggestionIndex}"]`,
       ) as HTMLElement | null;
       selectedEl?.scrollIntoView({ block: "nearest" });
     }, 0);
   }
-
   function moveSuggestionSelection(direction: 1 | -1) {
     if (allSuggestions.length === 0) return;
-
     if (selectedSuggestionIndex < 0) {
       selectedSuggestionIndex = direction > 0 ? 0 : allSuggestions.length - 1;
     } else {
@@ -340,35 +337,28 @@ no description yet
         (selectedSuggestionIndex + direction + allSuggestions.length) %
         allSuggestions.length;
     }
-
     ensureSuggestionLoaded(selectedSuggestionIndex);
     scrollSelectedSuggestionIntoView();
   }
-
   function handleSuggestionsScroll() {
     if (!suggestionsListEl) return;
-
     const thresholdPx = 28;
     const reachedBottom =
       suggestionsListEl.scrollTop + suggestionsListEl.clientHeight >=
       suggestionsListEl.scrollHeight - thresholdPx;
     const reachedTop = suggestionsListEl.scrollTop <= thresholdPx;
-
     if (reachedBottom) {
       loadMoreSuggestions();
       return;
     }
-
     if (reachedTop && loadedStartIndex > 0) {
       loadedStartIndex = Math.max(0, loadedStartIndex - SUGGESTION_BATCH_SIZE);
       syncVisibleSuggestions();
     }
   }
-
   function getSuggestionHostname(rawUrl: string) {
     const value = rawUrl.trim();
     if (!value) return null;
-
     try {
       const maybeUrl = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value)
         ? value
@@ -379,61 +369,71 @@ no description yet
       return null;
     }
   }
-
   function getSuggestionFavicon(rawUrl: string) {
     const host = getSuggestionHostname(rawUrl);
     if (!host) return null;
     return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=32`;
   }
-
   function getSuggestionUrlPreview(rawUrl: string) {
     const host = getSuggestionHostname(rawUrl);
     return host || rawUrl;
   }
-
   function getSuggestionVisitLabel(suggestion: Suggestion) {
     if (suggestion.kind !== "history") return "";
-
     if (suggestion.isPinned && suggestion.count >= 10) {
       return ">10";
     }
-
     return String(suggestion.count);
   }
-
   function getSuggestionVisitTitle(suggestion: Suggestion) {
     if (suggestion.kind !== "history") return "";
-
     if (suggestion.isPinned && suggestion.count >= 10) {
       return "Pinned match with boosted score (likely visited more than 10 times).";
     }
-
     return `Visited ${suggestion.count} ${suggestion.count === 1 ? "time" : "times"}`;
   }
-
   function getMathSuggestionForShortcut(): Suggestion | null {
     if (!suggestionsVisible || allSuggestions.length === 0) return null;
-
     if (selectedSuggestionIndex >= 0) {
       const selectedSuggestion = allSuggestions[selectedSuggestionIndex];
       if (selectedSuggestion?.kind === "math") {
         return selectedSuggestion;
       }
     }
-
     const firstSuggestion = allSuggestions[0];
     if (firstSuggestion?.kind === "math") {
       return firstSuggestion;
     }
-
     return null;
   }
+  function clearSuggestions() {
+    allSuggestions = [];
+    loadedStartIndex = 0;
+    loadedSuggestionCount = 0;
+    suggestions = [];
+    suggestionsVisible = false;
+    selectedSuggestionIndex = -1;
+  }
+  function getCompletionSuffix() {
+    if (!suggestionsVisible || allSuggestions.length === 0) return "";
+    const suggestion =
+      allSuggestions[
+        selectedSuggestionIndex >= 0 ? selectedSuggestionIndex : 0
+      ];
+    if (!suggestion || suggestion.kind === "math") return "";
 
+    const candidate = suggestion.query || suggestion.url;
+    const typed = query;
+    if (!typed || !candidate.toLowerCase().startsWith(typed.toLowerCase())) {
+      return "";
+    }
+    return candidate.slice(typed.length);
+  }
   function updateSuggestions(input: string) {
     const command = parseSearchCommand(input);
+    const commandPrefix = command ? null : getCommandPrefix(input);
     const effectiveInput = command ? command.query : input;
     const trimmedInput = effectiveInput.trim();
-
     if (!trimmedInput) {
       allSuggestions = [];
       loadedStartIndex = 0;
@@ -443,10 +443,18 @@ no description yet
       selectedSuggestionIndex = -1;
       return;
     }
-
     const inputLower = trimmedInput.toLowerCase();
     const localSuggestions: Suggestion[] = [];
-
+    if (commandPrefix) {
+      localSuggestions.push({
+        kind: "command",
+        url: commandPrefix.prefix,
+        query: `${commandPrefix.prefix} `,
+        provider: commandPrefix.providerId,
+        displayText: `${commandPrefix.prefix} — ${commandPrefix.label}`,
+        count: 0,
+      });
+    }
     const mathEvaluation = evaluateMathExpression(trimmedInput);
     if (mathEvaluation.ok) {
       localSuggestions.push({
@@ -457,63 +465,79 @@ no description yet
         mathResult: mathEvaluation.result,
       });
     }
-
     // Aggregate by URL/query, count occurrences and track most recent query
     const urlMap = new Map<
       string,
       {
         displayText: string;
+        query: string;
+        provider?: string;
         count: number;
         lastTimestamp: number;
         isPinned: boolean;
       }
     >();
-
     // First, check pinned sites for matches (fuzzy case-insensitive)
     const pinnedSites =
       $settings.pinned && $settings.pinned.length > 0
         ? $settings.pinned
         : DEFAULT_PINNED_SITES;
-
     pinnedSites.forEach((site) => {
       if (!site || !site.url) return;
-
       const titleLower = (site.title || "").toLowerCase();
       const urlLower = (site.url || "").toLowerCase();
-
       if (titleLower.includes(inputLower) || urlLower.includes(inputLower)) {
         urlMap.set(site.url, {
           displayText: site.title || site.url,
+          query: site.url,
           count: 10, // Give pinned sites higher weight
           lastTimestamp: Date.now(), // Treat as recent
           isPinned: true,
         });
       }
     });
-
     // Then aggregate history entries
     historyList.forEach((item) => {
       const url = item.url || item.query;
       if (!url) return;
-
       // Check if URL or query matches the input (case-insensitive)
       const urlLower = url.toLowerCase();
       const queryLower = (item.query || "").toLowerCase();
-
-      if (urlLower.includes(inputLower) || queryLower.includes(inputLower)) {
+      const commandHistoryMatch =
+        commandPrefix?.providerId === item.provider &&
+        Boolean(item.query || item.url);
+      if (
+        urlLower.includes(inputLower) ||
+        queryLower.includes(inputLower) ||
+        commandHistoryMatch
+      ) {
         const existing = urlMap.get(url);
         if (existing) {
           // Update existing entry (might be from pinned sites)
+          const historyQuery = commandHistoryMatch
+            ? `${commandPrefix!.prefix} ${item.query || url}`
+            : item.query || existing.query || url;
           urlMap.set(url, {
-            displayText: item.query || existing.displayText || url,
+            displayText: commandHistoryMatch
+              ? historyQuery
+              : item.query || existing.displayText || url,
+            query: existing.isPinned
+              ? historyQuery
+              : existing.query || historyQuery,
+            provider: existing.provider || item.provider,
             count: existing.count + 1,
             lastTimestamp: Math.max(existing.lastTimestamp, item.time || 0),
             isPinned: existing.isPinned,
           });
         } else {
           // New entry from history
+          const historyQuery = commandHistoryMatch
+            ? `${commandPrefix!.prefix} ${item.query || url}`
+            : item.query || url;
           urlMap.set(url, {
-            displayText: item.query || url,
+            displayText: historyQuery,
+            query: historyQuery,
+            provider: item.provider,
             count: 1,
             lastTimestamp: item.time || 0,
             isPinned: false,
@@ -521,12 +545,13 @@ no description yet
         }
       }
     });
-
     // Sort by frequency (count) first, then by recency.
     const sorted = Array.from(urlMap.entries())
       .map(([url, data]) => ({
         kind: "history" as const,
         url,
+        query: data.query || url,
+        provider: data.provider,
         displayText: data.displayText,
         count: data.count,
         isPinned: data.isPinned,
@@ -538,40 +563,37 @@ no description yet
         // Secondary sort: by recency
         return b.lastTimestamp - a.lastTimestamp;
       });
-
     localSuggestions.push(...sorted);
-
     allSuggestions = localSuggestions;
     loadedStartIndex = 0;
     loadedSuggestionCount = Math.min(INITIAL_VISIBLE_SUGGESTIONS, getLoadCap());
     syncVisibleSuggestions();
     selectedSuggestionIndex = -1;
   }
-
   function handleInput() {
     // user manually edited the input -> exit history browsing mode
     historyPos = -1;
     originalTyped = "";
-
     // Update autocomplete suggestions on every input change
     updateSuggestions(query);
   }
-
   async function selectSuggestion(suggestion: Suggestion) {
     if (suggestion.kind === "math") {
       if (suggestion.mathResult) {
         await copyToClipboard(suggestion.mathResult);
       }
-      allSuggestions = [];
-      loadedStartIndex = 0;
-      loadedSuggestionCount = 0;
-      suggestions = [];
-      suggestionsVisible = false;
-      selectedSuggestionIndex = -1;
+      clearSuggestions();
       return;
     }
-
-    query = suggestion.url;
+    query = suggestion.query || suggestion.url;
+    if (
+      suggestion.provider &&
+      orderedProviders.some((provider) => provider.id === suggestion.provider)
+    ) {
+      selectedProviderId = suggestion.provider;
+    }
+    historyPos = -1;
+    originalTyped = "";
     allSuggestions = [];
     loadedStartIndex = 0;
     loadedSuggestionCount = 0;
@@ -579,7 +601,6 @@ no description yet
     suggestionsVisible = false;
     selectedSuggestionIndex = -1;
   }
-
   function cycleProvider(direction: number) {
     const currentIndex = selectedIndex >= 0 ? selectedIndex : 0;
     const nextIndex =
@@ -587,28 +608,22 @@ no description yet
       orderedProviders.length;
     selectedProviderId = orderedProviders[nextIndex].id;
   }
-
   function handleProviderScroll(e: WheelEvent) {
     // Check if provider scroll is enabled
     if ($settings.enableProviderScroll === false) return;
-
     e.preventDefault();
     e.stopPropagation();
-
     // Debounce to prevent rapid-fire scrolling (mouse wheel can fire multiple events)
     const now = Date.now();
     const timeSinceLastScroll = now - lastScrollTime;
     if (timeSinceLastScroll < 300) return; // 300ms debounce
     lastScrollTime = now;
-
     // Positive deltaY = scroll down = previous provider
     // Negative deltaY = scroll up = next provider
     cycleProvider(e.deltaY > 0 ? -1 : 1);
   }
-
   function handleKeydown(e: KeyboardEvent) {
     if (!inputEl) return;
-
     // Math copy shortcuts:
     // Ctrl+C copies result, Ctrl+Shift+C copies "formula = result".
     if (e.ctrlKey && e.key.toLowerCase() === "c") {
@@ -626,7 +641,6 @@ no description yet
         }
       }
     }
-
     // Handle autocomplete navigation if suggestions are visible
     if (suggestionsVisible && allSuggestions.length > 0) {
       if (e.key === "ArrowDown") {
@@ -659,9 +673,12 @@ no description yet
         e.preventDefault();
         moveSuggestionSelection(e.shiftKey ? -1 : 1);
         return;
+      } else if (e.key === " " && selectedSuggestionIndex >= 0) {
+        e.preventDefault();
+        void selectSuggestion(allSuggestions[selectedSuggestionIndex]);
+        return;
       }
     }
-
     // handle arrow up/down for history navigation
     const caret = inputEl.selectionStart ?? 0;
     if (e.key === "ArrowUp") {
@@ -714,12 +731,10 @@ no description yet
       );
     }
   }
-
   function selectProvider(p: Provider) {
     selectedProviderId = p.id;
     providersVisible = false;
   }
-
   // Drag-n-drop handlers
   function handleDragStart(e: DragEvent, index: number) {
     draggedIndex = index;
@@ -727,46 +742,36 @@ no description yet
       e.dataTransfer.effectAllowed = "move";
     }
   }
-
   function handleDragOver(e: DragEvent, index: number) {
     e.preventDefault();
     if (e.dataTransfer) {
       e.dataTransfer.dropEffect = "move";
     }
   }
-
   function handleDrop(e: DragEvent, dropIndex: number) {
     e.preventDefault();
-
     if (draggedIndex === null || draggedIndex === dropIndex) {
       draggedIndex = null;
       return;
     }
-
     // Reorder the providers array
     const newOrder = [...orderedProviders];
     const [draggedProvider] = newOrder.splice(draggedIndex, 1);
     newOrder.splice(dropIndex, 0, draggedProvider);
-
     // Save the new order to settings
     const newOrderIds = newOrder.map((p) => p.id);
     setProviderOrder(newOrderIds);
-
     // No need to manually update selection - selectedProviderId tracks it automatically!
-
     draggedIndex = null;
   }
-
   function handleDragEnd() {
     draggedIndex = null;
   }
-
   async function checkUrlSafety(
     urlStr: string,
   ): Promise<{ verdict: "safe" | "unsafe" | "skip"; rating: string }> {
     const apiKey = $settings.safeBrowsingApiKey?.trim();
     if (!apiKey) return { verdict: "skip", rating: "" };
-
     try {
       const endpoint = `https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${encodeURIComponent(apiKey)}`;
       const res = await fetch(endpoint, {
@@ -803,16 +808,13 @@ no description yet
       return { verdict: "skip", rating: "" };
     }
   }
-
   async function submitForm(e: Event) {
     e.preventDefault();
     const command = parseSearchCommand(query);
     const q = command ? command.query : query;
-
     if (command?.providerId === "wiki") {
       const wikiUrl = new URL("https://en.wikipedia.org/w/index.php");
       wikiUrl.searchParams.set("search", q);
-
       try {
         addHistory({
           type: "search",
@@ -821,23 +823,20 @@ no description yet
           url: wikiUrl.toString(),
         });
       } catch (e) {}
-
-      if (openNew) window.open(wikiUrl.toString(), "_blank");
+      if (openNew)
+        window.open(wikiUrl.toString(), "_blank", "noopener,noreferrer");
       else window.location.href = wikiUrl.toString();
       return;
     }
-
     const p = command
       ? orderedProviders.find(
           (provider) => provider.id === command.providerId,
         ) || selected
       : selected;
     if (!p || !q.trim()) return;
-
     if (command) {
       selectedProviderId = p.id;
     }
-
     // If the user entered a URI, go there directly regardless of provider
     if (!command && isLikelyURI(q)) {
       const urlStr = ensureUrl(q);
@@ -845,12 +844,12 @@ no description yet
       const { verdict, rating } = await checkUrlSafety(urlStr);
       safetyCheckPending = false;
       if (verdict === "unsafe") {
-        blockedUrlInfo = { url: urlStr, rating };
+        blockedUrlInfo = { url: urlStr, query: q, rating };
         return;
       }
       if (verdict === "skip") {
         // Check was blocked (e.g. uBlock) or timed out — require explicit confirmation
-        skippedUrlInfo = { url: urlStr };
+        skippedUrlInfo = { url: urlStr, query: q };
         return;
       }
       try {
@@ -861,11 +860,10 @@ no description yet
           url: urlStr,
         });
       } catch (e) {}
-      if (openNew) window.open(urlStr, "_blank");
+      if (openNew) window.open(urlStr, "_blank", "noopener,noreferrer");
       else window.location.href = urlStr;
       return;
     }
-
     // Build URL for selected provider
     const url = new URL(p.action);
     if (p.id === "allkeyshop") {
@@ -890,9 +888,8 @@ no description yet
         url: url.toString(),
       });
     } catch (e) {}
-
     // open
-    if (openNew) window.open(url.toString(), "_blank");
+    if (openNew) window.open(url.toString(), "_blank", "noopener,noreferrer");
     else window.location.href = url.toString();
   }
 </script>
@@ -935,7 +932,6 @@ no description yet
       </button>
     {/each}
   </div>
-
   <div class="msc-row">
     <button
       type="button"
@@ -956,9 +952,13 @@ no description yet
         {/if}
       {/if}
     </button>
-
     <div class="input-with-icon">
       <i class="fa fa-search search-icon" aria-hidden="true"></i>
+      {#if getCompletionSuffix()}
+        <span class="completion-ghost" aria-hidden="true">
+          <span class="ghost-typed">{query}</span>{getCompletionSuffix()}
+        </span>
+      {/if}
       <input
         bind:this={inputEl}
         bind:value={query}
@@ -989,7 +989,6 @@ no description yet
         </span>
       {/if}
     </div>
-
     <button
       type="submit"
       class="primary hollow search-submit"
@@ -997,7 +996,6 @@ no description yet
     >
       <i class="fa fa-search" aria-hidden="true"></i>
     </button>
-
     <button
       type="button"
       title={openNew ? "Open links in same tab" : "Open links in new tab"}
@@ -1012,207 +1010,253 @@ no description yet
       ></i>
     </button>
   </div>
+  <div class="search-help" role="tooltip">
+    <strong>Quick actions</strong>
+    <span><kbd>yt</kbd> YouTube</span>
+    <span><kbd>maps</kbd> Maps</span>
+    <span><kbd>aks</kbd> AllKeyShop</span>
+    <span><kbd>wiki</kbd> Wikipedia</span>
+    <span><kbd>Tab</kbd> complete</span>
+    <span><kbd>Ctrl+C</kbd> copy math result</span>
+  </div>
 
-  <!-- Autocomplete suggestions dropdown - now directly below searchbar -->
-  {#if safetyCheckPending}
-    <div class="safety-checking">
-      <i class="fa fa-spinner fa-spin" aria-hidden="true"></i>
-      <span>Checking URL safety via Google Safe Browsing...</span>
-    </div>
-  {/if}
-
-  {#if skippedUrlInfo}
-    <div class="safety-warning safety-warning-amber" role="alert">
-      <div class="safety-warning-header safety-warning-header-amber">
-        <i class="fa fa-question-circle" aria-hidden="true"></i>
-        <span
-          >Safety check unavailable — Google Safe Browsing could not be reached</span
-        >
+  <div class="search-popover-stack">
+    {#if safetyCheckPending}
+      <div class="safety-checking">
+        <i class="fa fa-spinner fa-spin" aria-hidden="true"></i>
+        <span>Checking URL safety via Google Safe Browsing...</span>
       </div>
-      <div class="safety-warning-url">{skippedUrlInfo.url}</div>
-      <div class="safety-actions">
-        <button
-          type="button"
-          class="safety-proceed safety-proceed-amber"
-          onclick={() => {
-            const urlStr = skippedUrlInfo!.url;
-            skippedUrlInfo = null;
-            try {
-              addHistory({
-                type: "visit",
-                provider: "direct",
-                query: urlStr,
-                url: urlStr,
-              });
-            } catch {}
-            if (openNew) window.open(urlStr, "_blank");
-            else window.location.href = urlStr;
-          }}
-        >
-          <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
-          Visit anyway
-        </button>
-        <button
-          type="button"
-          class="safety-cancel"
-          onclick={() => (skippedUrlInfo = null)}
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  {/if}
-
-  {#if blockedUrlInfo}
-    <div class="safety-warning" role="alert">
-      <div class="safety-warning-header">
-        <i class="fa fa-shield-alt" aria-hidden="true"></i>
-        <span
-          >Google Safe Browsing flagged this URL as <strong
-            >{blockedUrlInfo.rating}</strong
-          ></span
-        >
-      </div>
-      <div class="safety-warning-url">{blockedUrlInfo.url}</div>
-      <div class="safety-actions">
-        <button
-          type="button"
-          class="safety-proceed"
-          onclick={() => {
-            const urlStr = blockedUrlInfo!.url;
-            blockedUrlInfo = null;
-            try {
-              addHistory({
-                type: "visit",
-                provider: "direct",
-                query: urlStr,
-                url: urlStr,
-              });
-            } catch {}
-            if (openNew) window.open(urlStr, "_blank");
-            else window.location.href = urlStr;
-          }}
-        >
-          <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
-          Visit anyway
-        </button>
-        <button
-          type="button"
-          class="safety-cancel"
-          onclick={() => (blockedUrlInfo = null)}
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  {/if}
-
-  {#if suggestionsVisible && suggestions.length > 0}
-    <div class="suggestions-dropdown" bind:this={suggestionsDropdownEl}>
-      <div
-        class="suggestions-list"
-        bind:this={suggestionsListEl}
-        onscroll={handleSuggestionsScroll}
-      >
-        {#each suggestions as suggestion, idx}
-          {@const globalIndex = loadedStartIndex + idx}
+    {/if}
+    {#if skippedUrlInfo}
+      <div class="safety-warning safety-warning-amber" role="alert">
+        <div class="safety-warning-header safety-warning-header-amber">
+          <i class="fa fa-question-circle" aria-hidden="true"></i>
+          <span
+            >Safety check unavailable — Google Safe Browsing could not be
+            reached</span
+          >
+        </div>
+        <div class="safety-warning-url">{skippedUrlInfo.url}</div>
+        <div class="safety-actions">
           <button
             type="button"
-            class="suggestion-item"
-            class:selected={globalIndex === selectedSuggestionIndex}
-            data-suggestion-index={globalIndex}
-            onclick={() => selectSuggestion(suggestion)}
-            onmouseenter={() => (selectedSuggestionIndex = globalIndex)}
+            class="safety-proceed safety-proceed-amber"
+            onclick={() => {
+              const { url: urlStr, query: originalQuery } = skippedUrlInfo!;
+              skippedUrlInfo = null;
+              try {
+                addHistory({
+                  type: "visit",
+                  provider: "direct",
+                  query: originalQuery,
+                  url: urlStr,
+                });
+              } catch {}
+              if (openNew) window.open(urlStr, "_blank", "noopener,noreferrer");
+              else window.location.href = urlStr;
+            }}
           >
-            {#if suggestion.kind === "math"}
-              <i class="fa fa-calculator suggestion-icon" aria-hidden="true"
-              ></i>
-            {:else}
-              {@const favicon = getSuggestionFavicon(suggestion.url)}
-              {#if favicon}
-                <img
-                  class="suggestion-favicon"
-                  src={favicon}
-                  alt=""
-                  loading="lazy"
-                  referrerpolicy="no-referrer"
-                  onerror={(e) => {
-                    (e.currentTarget as HTMLImageElement).style.display =
-                      "none";
-                  }}
-                />
-              {:else}
-                <i class="fa fa-history suggestion-icon" aria-hidden="true"></i>
-              {/if}
-            {/if}
-            <div class="suggestion-content">
-              <div class="suggestion-text">{suggestion.displayText}</div>
+            <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+            Visit anyway
+          </button>
+          <button
+            type="button"
+            class="safety-cancel"
+            onclick={() => (skippedUrlInfo = null)}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    {/if}
+    {#if blockedUrlInfo}
+      <div class="safety-warning" role="alert">
+        <div class="safety-warning-header">
+          <i class="fa fa-shield-alt" aria-hidden="true"></i>
+          <span
+            >Google Safe Browsing flagged this URL as <strong
+              >{blockedUrlInfo.rating}</strong
+            ></span
+          >
+        </div>
+        <div class="safety-warning-url">{blockedUrlInfo.url}</div>
+        <div class="safety-actions">
+          <button
+            type="button"
+            class="safety-proceed"
+            onclick={() => {
+              const { url: urlStr, query: originalQuery } = blockedUrlInfo!;
+              blockedUrlInfo = null;
+              try {
+                addHistory({
+                  type: "visit",
+                  provider: "direct",
+                  query: originalQuery,
+                  url: urlStr,
+                });
+              } catch {}
+              if (openNew) window.open(urlStr, "_blank", "noopener,noreferrer");
+              else window.location.href = urlStr;
+            }}
+          >
+            <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+            Visit anyway
+          </button>
+          <button
+            type="button"
+            class="safety-cancel"
+            onclick={() => (blockedUrlInfo = null)}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    {/if}
+    {#if suggestionsVisible && suggestions.length > 0}
+      <div class="suggestions-dropdown" bind:this={suggestionsDropdownEl}>
+        <div
+          class="suggestions-list"
+          bind:this={suggestionsListEl}
+          onscroll={handleSuggestionsScroll}
+        >
+          {#each suggestions as suggestion, idx}
+            {@const globalIndex = loadedStartIndex + idx}
+            <button
+              type="button"
+              class="suggestion-item"
+              class:selected={globalIndex === selectedSuggestionIndex}
+              data-suggestion-index={globalIndex}
+              onclick={() => selectSuggestion(suggestion)}
+              onmouseenter={() => (selectedSuggestionIndex = globalIndex)}
+            >
               {#if suggestion.kind === "math"}
-                <div class="suggestion-subtext">
-                  Ctrl+C copy result, Ctrl+Shift+C copy formula = result
-                </div>
-              {/if}
-            </div>
-            <div class="suggestion-meta">
-              {#if suggestion.kind === "history"}
-                <span class="suggestion-url" title={suggestion.url}
-                  >{getSuggestionUrlPreview(suggestion.url)}</span
-                >
-                {#if suggestion.count > 1 || suggestion.isPinned}
-                  <span
-                    class="suggestion-count"
-                    title={getSuggestionVisitTitle(suggestion)}
-                  >
-                    {getSuggestionVisitLabel(suggestion)}
-                  </span>
+                <i class="fa fa-calculator suggestion-icon" aria-hidden="true"
+                ></i>
+              {:else}
+                {@const favicon = getSuggestionFavicon(suggestion.url)}
+                {#if favicon}
+                  <img
+                    class="suggestion-favicon"
+                    src={favicon}
+                    alt=""
+                    loading="lazy"
+                    referrerpolicy="no-referrer"
+                    onerror={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.display =
+                        "none";
+                    }}
+                  />
+                {:else}
+                  <i class="fa fa-history suggestion-icon" aria-hidden="true"
+                  ></i>
                 {/if}
               {/if}
-            </div>
-          </button>
-        {/each}
+              <div class="suggestion-content">
+                <div class="suggestion-text">{suggestion.displayText}</div>
+                {#if suggestion.kind === "math"}
+                  <div class="suggestion-subtext">
+                    Ctrl+C copy result, Ctrl+Shift+C copy formula = result
+                  </div>
+                {/if}
+              </div>
+              <div class="suggestion-meta">
+                {#if suggestion.kind === "history"}
+                  <span class="suggestion-url" title={suggestion.url}
+                    >{getSuggestionUrlPreview(suggestion.url)}</span
+                  >
+                  {#if suggestion.count > 1 || suggestion.isPinned}
+                    <span
+                      class="suggestion-count"
+                      title={getSuggestionVisitTitle(suggestion)}
+                    >
+                      {getSuggestionVisitLabel(suggestion)}
+                    </span>
+                  {/if}
+                {/if}
+              </div>
+            </button>
+          {/each}
+        </div>
+        <div class="suggestions-footer" aria-live="polite">
+          <span class="footer-highlighted">
+            {selectedSuggestionIndex >= 0
+              ? `${selectedSuggestionIndex + 1}/${allSuggestions.length} highlighted`
+              : `0/${allSuggestions.length} highlighted`}
+          </span>
+          <span class="footer-separator">•</span>
+          <span>{loadedSuggestionCount}/{allSuggestions.length} loaded</span>
+        </div>
       </div>
-
-      <div class="suggestions-footer" aria-live="polite">
-        <span class="footer-highlighted">
-          {selectedSuggestionIndex >= 0
-            ? `${selectedSuggestionIndex + 1}/${allSuggestions.length} highlighted`
-            : `0/${allSuggestions.length} highlighted`}
-        </span>
-        <span class="footer-separator">•</span>
-        <span>{loadedSuggestionCount}/{allSuggestions.length} loaded</span>
-      </div>
-    </div>
-  {/if}
+    {/if}
+  </div>
 </form>
 
 <style>
   /* Container: make everything sit 'inside' a single bar */
   .multi-search-container {
     width: 100%;
+    min-width: 0;
     position: relative;
+    box-sizing: border-box;
   }
   .multi-search-container button {
     cursor: pointer;
   }
-
+  .search-help {
+    display: none;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.75rem;
+    margin-top: 0.45rem;
+    padding: 0.45rem 0.7rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.5rem;
+    background: rgba(16, 20, 26, 0.92);
+    color: var(--placeholder);
+    font-size: 0.78rem;
+    line-height: 1.3;
+    pointer-events: none;
+  }
+  .msc-row:hover + .search-help {
+    display: flex;
+  }
+  .search-help strong {
+    color: var(--text);
+  }
+  .search-help kbd {
+    padding: 0.08rem 0.3rem;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 0.25rem;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.72rem;
+  }
+  .search-popover-stack {
+    position: relative;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
   .msc-row {
     display: flex;
+    min-width: 0;
     align-items: center;
     gap: 0; /* items sit flush */
     width: 100%;
-    background: var(--card, #888888);
+    background: var(--container);
     border: 1px solid rgba(0, 0, 0, 0.08);
     border-radius: 0.75rem;
     padding: 0.5rem; /* inner gutter */
     box-sizing: border-box;
   }
-
   /* when any child inside is focused, highlight the whole bar */
   .msc-row:focus-within {
-    border-color: var(--dark-400, #0d6efd);
+    background: var(--card);
+    border-color: var(--dark-400);
     box-shadow: 0 4px 10px rgba(13, 110, 253, 0.1);
   }
-
   /* Buttons inside the bar: transparent so they visually integrate */
   .msc-row > button {
     background: transparent;
@@ -1225,7 +1269,6 @@ no description yet
     justify-content: center;
     border-radius: 0.5rem;
   }
-
   /* Keep provider image size but align it nicely */
   .provider-button {
     display: flex;
@@ -1238,11 +1281,11 @@ no description yet
     border-radius: 3px;
     display: block;
   }
-
   /* Input area stretches to fill available space */
   .input-with-icon {
     position: relative;
-    flex: 1;
+    flex: 1 1 0;
+    min-width: 0;
     margin: 0 0.35rem;
   }
   .input-with-icon .search-icon {
@@ -1250,11 +1293,14 @@ no description yet
     left: 0.65rem;
     top: 50%;
     transform: translateY(-50%);
-    color: var(--placeholder, #999);
+    color: var(--placeholder);
     pointer-events: none;
   }
   .input-with-icon input {
     width: 100%;
+    min-width: 0;
+    position: relative;
+    z-index: 1;
     border: none;
     outline: none;
     height: 2.25rem;
@@ -1263,6 +1309,23 @@ no description yet
     padding-right: 2rem;
     font-size: 1rem;
     box-sizing: border-box;
+  }
+  .completion-ghost {
+    position: absolute;
+    z-index: 0;
+    top: 50%;
+    left: 2.5rem;
+    right: 2rem;
+    overflow: hidden;
+    transform: translateY(-50%);
+    color: var(--placeholder);
+    font-size: 1rem;
+    line-height: 1;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  .ghost-typed {
+    color: transparent;
   }
   .url-safety-indicator {
     position: absolute;
@@ -1312,14 +1375,13 @@ no description yet
     color: rgba(200, 150, 40, 0.95);
   }
   .url-safety-indicator.checking {
-    color: var(--placeholder, #999);
+    color: var(--placeholder);
   }
   .input-with-icon input:focus {
     outline: none !important;
     box-shadow: none;
     border: none;
   }
-
   /* Provider list (dropdown-like) now above the bar */
   .provider-list {
     margin-bottom: 0.5rem;
@@ -1349,64 +1411,53 @@ no description yet
       border-color 0.15s;
     padding: 0.35rem 0.55rem;
     border-radius: 0.5rem;
-    background: var(--card, #f8f9fa);
+    background: var(--card);
     border: 1px solid rgba(0, 0, 0, 0.08);
   }
-
   .provider-list-button:hover {
-    background: var(--card-hover, #f1f3f5);
+    background: var(--dark-600);
     border-color: rgba(0, 0, 0, 0.12);
   }
-
   .provider-list-button:active {
     cursor: grabbing;
   }
-
   .provider-list-button.dragging {
     opacity: 0.5;
     transform: scale(0.95);
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
   }
-
   .drag-handle {
-    color: var(--placeholder, #999);
+    color: var(--placeholder);
     font-size: 0.75rem;
     cursor: grab;
     opacity: 0.6;
     transition: opacity 0.15s;
   }
-
   .provider-list-button:hover .drag-handle {
     opacity: 1;
   }
-
   .provider-list-button:active .drag-handle {
     cursor: grabbing;
   }
-
   .provider-list-img {
     width: 1.25rem;
     height: 1.25rem;
     border-radius: 3px;
   }
-
   .provider-name {
     font-size: 0.9rem;
     font-weight: 500;
   }
-
   /* Tweak open-new button padding */
   .open-new {
     padding: 0.45rem 0.6rem;
   }
-
   /* Focus outline for keyboard users */
   .msc-row > button:focus,
   .input-with-icon input:focus {
     outline: 2px solid rgba(0, 123, 255, 0.12);
     outline-offset: 2px;
   }
-
   /* Remove click/focus visual effects for the provider toggle specifically */
   .provider-button,
   .provider-button:focus,
@@ -1416,15 +1467,12 @@ no description yet
     box-shadow: none !important;
     outline: none !important;
   }
-
   /* Autocomplete suggestions dropdown */
   .suggestions-dropdown {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    margin-top: 0.5rem;
-    background: var(--card, #888888);
+    position: relative;
+    width: 100%;
+    margin-top: 0;
+    background: var(--card);
     border: 1px solid rgba(0, 0, 0, 0.08);
     border-radius: 0.75rem;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
@@ -1434,14 +1482,12 @@ no description yet
     display: flex;
     flex-direction: column;
   }
-
   .suggestions-list {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
     padding-bottom: 0.25rem;
   }
-
   .suggestion-item {
     width: 100%;
     display: flex;
@@ -1455,24 +1501,20 @@ no description yet
     transition: background 0.15s ease;
     scroll-margin-bottom: 3.4rem;
   }
-
   .suggestion-item:hover,
   .suggestion-item.selected {
     background: rgba(255, 255, 255, 0.22);
   }
-
   .suggestion-item:not(:last-child) {
     border-bottom: 1px solid rgba(0, 0, 0, 0.05);
   }
-
   .suggestion-icon {
-    color: var(--placeholder, #999);
+    color: var(--placeholder);
     font-size: 0.9rem;
     flex-shrink: 0;
     width: 1rem;
     text-align: center;
   }
-
   .suggestion-content {
     min-width: 0;
     flex: 1;
@@ -1480,22 +1522,19 @@ no description yet
     flex-direction: column;
     gap: 0.1rem;
   }
-
   .suggestion-text {
     font-size: 1rem;
-    color: var(--text, #333);
+    color: var(--text);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-
   .suggestion-favicon {
     width: 1rem;
     height: 1rem;
     border-radius: 3px;
     flex-shrink: 0;
   }
-
   .suggestion-meta {
     margin-left: auto;
     min-width: 0;
@@ -1504,26 +1543,23 @@ no description yet
     gap: 0.5rem;
     max-width: 45%;
   }
-
   .suggestion-url {
     font-size: 0.85rem;
-    color: var(--placeholder, #999);
+    color: var(--placeholder);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 100%;
   }
-
   .suggestion-subtext {
     font-size: 0.8rem;
-    color: var(--placeholder, #999);
+    color: var(--placeholder);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-
   .suggestion-count {
-    color: var(--text, #333);
+    color: var(--text);
     background: rgba(255, 255, 255, 0.4);
     border-radius: 999px;
     padding: 0.1rem 0.45rem;
@@ -1531,7 +1567,6 @@ no description yet
     font-weight: 500;
     flex-shrink: 0;
   }
-
   .suggestions-footer {
     flex-shrink: 0;
     display: flex;
@@ -1542,62 +1577,50 @@ no description yet
     background: rgba(16, 20, 26, 0.96);
     backdrop-filter: blur(6px);
     font-size: 0.78rem;
-    color: var(--placeholder, #bcc6cf);
+    color: var(--placeholder);
   }
-
   .footer-highlighted {
-    color: var(--dark-400, #0d6efd);
+    color: var(--dark-400);
     font-weight: 600;
   }
-
   .footer-separator {
     opacity: 0.6;
   }
-
   /* URL safety check UI */
   .safety-checking {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    margin-top: 0.5rem;
+    position: relative;
+    width: 100%;
+    box-sizing: border-box;
     display: flex;
     align-items: center;
     gap: 0.6rem;
     padding: 0.65rem 1rem;
-    background: var(--card, #888888);
+    background: var(--card);
     border: 1px solid rgba(0, 0, 0, 0.08);
     border-radius: 0.75rem;
     font-size: 0.88rem;
-    color: var(--placeholder, #999);
+    color: var(--placeholder);
     z-index: 1000;
   }
-
   .safety-warning-amber {
     border-color: rgba(180, 130, 30, 0.3);
   }
-
   .safety-warning-header-amber {
     color: rgba(200, 150, 40, 0.9);
   }
-
   .safety-proceed-amber {
     border-color: rgba(180, 130, 30, 0.3) !important;
     background: rgba(60, 45, 10, 0.12) !important;
     color: rgba(200, 150, 40, 0.9) !important;
   }
-
   .safety-proceed-amber:hover {
     background: rgba(60, 45, 10, 0.22) !important;
   }
-
   .safety-warning {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    margin-top: 0.5rem;
-    background: var(--card, #888888);
+    position: relative;
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--card);
     border: 1px solid rgba(180, 60, 60, 0.3);
     border-radius: 0.75rem;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
@@ -1607,7 +1630,6 @@ no description yet
     flex-direction: column;
     gap: 0.5rem;
   }
-
   .safety-warning-header {
     display: flex;
     align-items: center;
@@ -1615,19 +1637,16 @@ no description yet
     font-size: 0.93rem;
     color: rgba(200, 80, 80, 0.9);
   }
-
   .safety-warning-url {
     font-size: 0.82rem;
-    color: var(--placeholder, #999);
+    color: var(--placeholder);
     word-break: break-all;
   }
-
   .safety-actions {
     display: flex;
     gap: 0.5rem;
     margin-top: 0.2rem;
   }
-
   .safety-proceed {
     display: flex;
     align-items: center;
@@ -1641,22 +1660,19 @@ no description yet
     cursor: pointer;
     transition: background 0.15s;
   }
-
   .safety-proceed:hover {
     background: rgba(72, 24, 31, 0.22);
   }
-
   .safety-cancel {
     padding: 0.35rem 0.75rem;
     border-radius: 0.5rem;
     border: 1px solid rgba(0, 0, 0, 0.1);
     background: transparent;
-    color: var(--text, #333);
+    color: var(--text);
     font-size: 0.83rem;
     cursor: pointer;
     transition: background 0.15s;
   }
-
   .safety-cancel:hover {
     background: rgba(255, 255, 255, 0.12);
   }

@@ -12,37 +12,37 @@
   import { settings } from "$lib/stores";
   import { onMount } from "svelte";
 
-  // Focus the search input on mount
-  let searchInput: HTMLInputElement | null = null;
+  let reduceMotion = $state(false);
+  let onBattery = $state(false);
 
-  // Accessibility / battery-awareness: if the user prefers reduced motion or
-  // is currently on battery power (not charging), we'll disable background animations.
-  let reduceMotion = false;
-  let onBattery = false;
-  let _battery: any = null;
-  // Responsive sidebar state: when viewport < 1700px the sidebars become collapsible
-  let isWide = true;
-  let leftOpen = true;
-  let rightOpen = true;
+  let leftOpen = $state(true);
+  let rightOpen = $state(true);
 
-  // Performance optimization: defer non-critical components
-  let showSidebars = false;
-  let showBackground = false;
-  let showSettings = false;
+  let showSidebars = $state(false);
+  let showBackground = $state(false);
+  let showSettings = $state(false);
+  let settingsLoadFailed = $state(false);
+  let compactWidth = $state(false);
+  let collapseSystemInfo = $state(false);
+  let collapsePinnedSites = $state(false);
+  let showSystemInfoOverlay = $state(false);
+  let showPinnedSitesOverlay = $state(false);
+
+  let pageMain: HTMLElement | undefined;
+  let centerColumn: HTMLElement | undefined;
+  let searchWrap: HTMLElement | undefined;
+
+  const WIDE_BREAKPOINT = 1700;
 
   function updateWidth() {
     if (!browser) return;
-    const w = window.innerWidth;
-    const wasWide = isWide;
-    isWide = w >= 1700;
-    if (isWide) {
-      // always show sidebars on wide screens
+
+    const wide = window.innerWidth >= WIDE_BREAKPOINT;
+    compactWidth = !wide;
+
+    if (wide) {
       leftOpen = true;
       rightOpen = true;
-    } else if (wasWide && !isWide) {
-      // when crossing from wide -> narrow, collapse them to avoid cramped UI
-      leftOpen = false;
-      rightOpen = false;
     }
   }
 
@@ -55,75 +55,207 @@
   }
 
   onMount(() => {
-    if (browser && searchInput) {
-      // @ts-ignore
-      searchInput.focus();
+    let disposed = false;
+    let mediaQuery: MediaQueryList | undefined;
+    let battery: BatteryManager | undefined;
+
+    let animationFrameId: number | undefined;
+    let idleCallbackId: number | undefined;
+    let idleFallbackId: ReturnType<typeof setTimeout> | undefined;
+    let settingsTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    let layoutFrameId: number | undefined;
+    let wasWide: boolean | undefined;
+    let previousViewportHeight = window.innerHeight;
+
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (
+        callback: IdleRequestCallback,
+        options?: IdleRequestOptions,
+      ) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+
+    const updateMotionPreference = (event?: MediaQueryListEvent) => {
+      if (event) {
+        reduceMotion = event.matches;
+      } else if (mediaQuery) {
+        reduceMotion = mediaQuery.matches;
+      }
+    };
+
+    const updateBatteryState = () => {
+      if (battery) {
+        onBattery = !battery.charging;
+      }
+    };
+
+    const updateBackgroundVisibility = () => {
+      if (!disposed) {
+        showBackground = true;
+      }
+    };
+
+    const updateResponsiveLayout = () => {
+      if (disposed || !pageMain || !centerColumn || !searchWrap) return;
+
+      const wide = window.innerWidth >= WIDE_BREAKPOINT;
+      compactWidth = !wide;
+
+      if (wide) {
+        leftOpen = true;
+        rightOpen = true;
+      } else if (wasWide === undefined || wasWide) {
+        leftOpen = false;
+        rightOpen = false;
+      }
+      wasWide = wide;
+
+      const viewportHeightChanged =
+        window.innerHeight !== previousViewportHeight;
+      const viewportGrew = window.innerHeight > previousViewportHeight;
+      previousViewportHeight = window.innerHeight;
+
+      if (viewportHeightChanged && viewportGrew) {
+        collapseSystemInfo = false;
+        collapsePinnedSites = false;
+        showSystemInfoOverlay = false;
+        showPinnedSitesOverlay = false;
+      }
+
+      const mainBounds = pageMain.getBoundingClientRect();
+      const searchBounds = searchWrap.getBoundingClientRect();
+      const visibleBottom = Math.min(window.innerHeight, mainBounds.bottom) - 8;
+      const searchFits = searchBounds.bottom <= visibleBottom;
+
+      if (!searchFits) {
+        if (!collapseSystemInfo && ($settings.enableSystemInfo ?? true)) {
+          collapseSystemInfo = true;
+        } else if (!collapsePinnedSites) {
+          collapsePinnedSites = true;
+        }
+      }
+    };
+
+    const scheduleResponsiveLayout = () => {
+      if (layoutFrameId !== undefined) {
+        cancelAnimationFrame(layoutFrameId);
+      }
+      layoutFrameId = requestAnimationFrame(() => {
+        layoutFrameId = undefined;
+        updateResponsiveLayout();
+      });
+    };
+
+    const scheduleBackground = () => {
+      if (disposed) return;
+
+      if (typeof idleWindow.requestIdleCallback === "function") {
+        idleCallbackId = idleWindow.requestIdleCallback(
+          updateBackgroundVisibility,
+          { timeout: 100 },
+        );
+      } else {
+        idleFallbackId = setTimeout(updateBackgroundVisibility, 0);
+      }
+    };
+
+    mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+    updateMotionPreference();
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", updateMotionPreference);
+    } else {
+      // Compatibility with older browsers.
+      mediaQuery.addListener(updateMotionPreference);
     }
 
-    // respect prefers-reduced-motion
-    try {
-      reduceMotion =
-        !!window.matchMedia &&
-        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      if (window.matchMedia) {
-        const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-        mq.addEventListener?.("change", (e: any) => {
-          reduceMotion = e.matches;
+    // Battery Status API is optional and may be unavailable.
+    // Keep the page functional when the API is unsupported or rejected.
+    const batteryNavigator = navigator as Navigator & {
+      getBattery?: () => Promise<BatteryManager>;
+    };
+
+    if (typeof batteryNavigator.getBattery === "function") {
+      batteryNavigator
+        .getBattery()
+        .then((result) => {
+          if (disposed) return;
+
+          battery = result;
+          updateBatteryState();
+          battery.addEventListener("chargingchange", updateBatteryState);
+        })
+        .catch(() => {
+          // Battery detection is an optional optimization.
         });
-      }
-    } catch (e) {
-      /* ignore */
     }
 
-    // battery detection (if supported) — consider on battery when not charging
-    if ("getBattery" in navigator) {
-      try {
-        // @ts-ignore
-        (navigator as any)
-          .getBattery()
-          .then((bat: any) => {
-            _battery = bat;
-            onBattery = !bat.charging;
-            const update = () => {
-              onBattery = !_battery.charging;
-            };
-            _battery.addEventListener?.("chargingchange", update);
-            _battery.addEventListener?.("levelchange", update);
-          })
-          .catch(() => {});
-      } catch (e) {
-        /* ignore */
-      }
-    }
-
-    // set initial width state and add resize listener
     updateWidth();
-    const onResize = () => updateWidth();
-    window.addEventListener("resize", onResize);
+    window.addEventListener("resize", updateWidth, { passive: true });
+    window.addEventListener("resize", scheduleResponsiveLayout, {
+      passive: true,
+    });
 
-    // Performance optimization: progressive loading strategy
-    // 1. Show critical content immediately (search bar, pinned sites loaded)
-    // 2. Defer sidebars until next frame (after paint)
-    requestAnimationFrame(() => {
+    const resizeObserver = new ResizeObserver(scheduleResponsiveLayout);
+    if (pageMain) resizeObserver.observe(pageMain);
+    if (centerColumn) resizeObserver.observe(centerColumn);
+    if (searchWrap) resizeObserver.observe(searchWrap);
+    scheduleResponsiveLayout();
+
+    animationFrameId = requestAnimationFrame(() => {
+      if (disposed) return;
+
       showSidebars = true;
-      // 3. Defer background layers MORE - wait for idle
-      requestIdleCallback(
-        () => {
-          showBackground = true;
-        },
-        { timeout: 100 },
-      );
-      // 4. Defer settings overlay last
-      setTimeout(() => {
-        showSettings = true;
+      scheduleBackground();
+
+      settingsTimeoutId = setTimeout(() => {
+        if (!disposed) {
+          showSettings = true;
+        }
       }, 100);
     });
 
-    // cleanup on destroy
     return () => {
-      window.removeEventListener("resize", onResize);
+      disposed = true;
+
+      window.removeEventListener("resize", updateWidth);
+      window.removeEventListener("resize", scheduleResponsiveLayout);
+      resizeObserver.disconnect();
+
+      if (typeof mediaQuery?.removeEventListener === "function") {
+        mediaQuery.removeEventListener("change", updateMotionPreference);
+      } else {
+        mediaQuery?.removeListener(updateMotionPreference);
+      }
+
+      battery?.removeEventListener("chargingchange", updateBatteryState);
+
+      if (animationFrameId !== undefined) {
+        cancelAnimationFrame(animationFrameId);
+      }
+
+      if (idleCallbackId !== undefined) {
+        idleWindow.cancelIdleCallback?.(idleCallbackId);
+      }
+
+      if (idleFallbackId !== undefined) {
+        clearTimeout(idleFallbackId);
+      }
+
+      if (settingsTimeoutId !== undefined) {
+        clearTimeout(settingsTimeoutId);
+      }
+
+      if (layoutFrameId !== undefined) {
+        cancelAnimationFrame(layoutFrameId);
+      }
     };
   });
+
+  type BatteryManager = EventTarget & {
+    charging: boolean;
+  };
 </script>
 
 <svelte:head>
@@ -131,14 +263,12 @@
   <meta name="description" content="" />
   <link rel="icon" type="image/png" href={favicon} />
 
-  <!-- Preconnect to critical search providers for faster initial searches -->
   <link
     rel="preconnect"
     href="https://www.google.com"
     crossorigin="anonymous"
   />
 
-  <!-- DNS prefetch for other frequently used providers -->
   <link rel="dns-prefetch" href="https://www.google.com" />
   <link rel="dns-prefetch" href="https://duckduckgo.com" />
   <link rel="dns-prefetch" href="https://www.youtube.com" />
@@ -147,10 +277,6 @@
   <link rel="dns-prefetch" href="https://chatgpt.com" />
 </svelte:head>
 
-<!-- Background container: sits on top of the <body> but behind the app UI.
-     Users can style layers via the ids/classes below (for example in Settings' custom CSS).
-     Each layer is pointer-events:none so it won't intercept clicks.
-     Deferred loading for performance. -->
 {#if showBackground}
   <div id="lt-bg" aria-hidden="true" class:no-anim={reduceMotion || onBattery}>
     <div class="lt-bg-layer lt-bg-layer-1"></div>
@@ -161,31 +287,38 @@
   </div>
 {/if}
 
-<main class="page-main">
+<main class="page-main" bind:this={pageMain}>
   {#if showSidebars && ($settings.enableTranslator ?? true)}
     <aside
       id="left-sidebar"
       class="sidebar left"
-      class:collapsed={!leftOpen && !isWide}
-      aria-hidden={!leftOpen && !isWide}
+      class:collapsed={!leftOpen}
+      aria-hidden={!leftOpen}
+      inert={!leftOpen}
       data-open={leftOpen}
     >
       <Translator />
     </aside>
   {/if}
 
-  <div class="center-column">
-    {#if $settings.enableSystemInfo ?? true}
+  <div
+    class="center-column"
+    class:center-content={collapseSystemInfo || collapsePinnedSites}
+    bind:this={centerColumn}
+  >
+    {#if ($settings.enableSystemInfo ?? true) && !collapseSystemInfo}
       <div class="system-wrap">
         <SystemInfo />
       </div>
     {/if}
 
-    <div class="pinned-wrap">
-      <PinnedSites />
-    </div>
+    {#if !collapsePinnedSites}
+      <div class="pinned-wrap">
+        <PinnedSites />
+      </div>
+    {/if}
 
-    <div class="search-wrap">
+    <div class="search-wrap" bind:this={searchWrap}>
       <SearchBar />
     </div>
   </div>
@@ -194,51 +327,154 @@
     <aside
       id="right-sidebar"
       class="sidebar right"
-      class:collapsed={!rightOpen && !isWide}
-      aria-hidden={!rightOpen && !isWide}
+      class:collapsed={!rightOpen}
+      aria-hidden={!rightOpen}
+      inert={!rightOpen}
       data-open={rightOpen}
     >
       <History />
     </aside>
   {/if}
 
-  <!-- collapse toggles, visible only on narrow screens -->
-  {#if showSidebars}
+  {#if showSidebars && ($settings.enableTranslator ?? true)}
     <button
       class="sidebar-toggle left"
       aria-expanded={leftOpen}
       aria-controls="left-sidebar"
       onclick={toggleLeft}
-      title="Toggle left sidebar"
-      aria-label="Toggle left sidebar"
+      title={leftOpen ? "Collapse translator" : "Expand translator"}
+      aria-label={leftOpen ? "Collapse translator" : "Expand translator"}
     >
       <i
         class="fa"
         aria-hidden="true"
-        class:fa-chevron-right={!!leftOpen}
+        class:fa-chevron-right={leftOpen}
         class:fa-chevron-left={!leftOpen}
       ></i>
     </button>
+  {/if}
+
+  {#if showSidebars && ($settings.enableHistory ?? true)}
     <button
       class="sidebar-toggle right"
       aria-expanded={rightOpen}
       aria-controls="right-sidebar"
       onclick={toggleRight}
-      title="Toggle right sidebar"
-      aria-label="Toggle right sidebar"
+      title={rightOpen ? "Collapse history" : "Expand history"}
+      aria-label={rightOpen ? "Collapse history" : "Expand history"}
     >
       <i
         class="fa"
         aria-hidden="true"
-        class:fa-chevron-left={!!rightOpen}
+        class:fa-chevron-left={rightOpen}
         class:fa-chevron-right={!rightOpen}
       ></i>
     </button>
   {/if}
 
+  {#if showSidebars && compactWidth}
+    <div class="compact-overflow-controls" aria-label="Additional tools">
+      {#if ($settings.enableSystemInfo ?? true) && (collapseSystemInfo || showSystemInfoOverlay)}
+        <button
+          class="compact-toggle"
+          class:active={showSystemInfoOverlay}
+          aria-expanded={showSystemInfoOverlay}
+          aria-controls="system-info-overlay"
+          onclick={() => (showSystemInfoOverlay = !showSystemInfoOverlay)}
+          title={showSystemInfoOverlay
+            ? "Hide system info"
+            : "Show system info"}
+          aria-label={showSystemInfoOverlay
+            ? "Hide system info"
+            : "Show system info"}
+        >
+          <i class="fa fa-info-circle" aria-hidden="true"></i>
+        </button>
+      {/if}
+      {#if collapsePinnedSites || showPinnedSitesOverlay}
+        <button
+          class="compact-toggle"
+          class:active={showPinnedSitesOverlay}
+          aria-expanded={showPinnedSitesOverlay}
+          aria-controls="pinned-sites-overlay"
+          onclick={() => (showPinnedSitesOverlay = !showPinnedSitesOverlay)}
+          title={showPinnedSitesOverlay
+            ? "Hide pinned sites"
+            : "Show pinned sites"}
+          aria-label={showPinnedSitesOverlay
+            ? "Hide pinned sites"
+            : "Show pinned sites"}
+        >
+          <i class="fa fa-thumb-tack" aria-hidden="true"></i>
+        </button>
+      {/if}
+      {#if $settings.enableTranslator ?? true}
+        <button
+          class="compact-toggle"
+          class:active={leftOpen}
+          aria-expanded={leftOpen}
+          aria-controls="left-sidebar"
+          onclick={toggleLeft}
+          title={leftOpen ? "Hide translator" : "Show translator"}
+          aria-label={leftOpen ? "Hide translator" : "Show translator"}
+        >
+          <i class="fa fa-language" aria-hidden="true"></i>
+        </button>
+      {/if}
+      {#if $settings.enableHistory ?? true}
+        <button
+          class="compact-toggle"
+          class:active={rightOpen}
+          aria-expanded={rightOpen}
+          aria-controls="right-sidebar"
+          onclick={toggleRight}
+          title={rightOpen ? "Hide history" : "Show history"}
+          aria-label={rightOpen ? "Hide history" : "Show history"}
+        >
+          <i class="fa fa-history" aria-hidden="true"></i>
+        </button>
+      {/if}
+    </div>
+  {/if}
+
+  {#if showSystemInfoOverlay}
+    <section
+      id="system-info-overlay"
+      class="center-overlay"
+      aria-label="System information"
+    >
+      <SystemInfo />
+    </section>
+  {/if}
+
+  {#if showPinnedSitesOverlay}
+    <section
+      id="pinned-sites-overlay"
+      class="center-overlay"
+      aria-label="Pinned sites"
+    >
+      <PinnedSites />
+    </section>
+  {/if}
+
   {#if showSettings}
     {#await import("$lib/components/Settings.svelte") then { default: Settings }}
       <Settings />
+    {:catch error}
+      <div class="settings-load-error" role="status">
+        Settings could not be loaded.
+        <button
+          onclick={() => {
+            settingsLoadFailed = false;
+            showSettings = false;
+            requestAnimationFrame(() => {
+              showSettings = true;
+            });
+          }}
+        >
+          Retry
+        </button>
+      </div>
     {/await}
   {/if}
 </main>
@@ -247,12 +483,13 @@
   :global(.hollow) {
     border: none !important;
   }
+
   :global(*:not(.fa)) {
     font-family: Arial, Helvetica, sans-serif !important;
   }
+
   :global(*) {
-    /* Change font to something smooth */
-    --quaternary: #e1475a; /* equal to quaternary-500 */
+    --quaternary: #e1475a;
     --quaternary-50: #fce4e8;
     --quaternary-100: #f8d7da;
     --quaternary-200: #f1b3ba;
@@ -263,7 +500,8 @@
     --quaternary-700: #b02e43;
     --quaternary-800: #911a41;
     --quaternary-900: #6f0b3a;
-    --primary: #9d24a1; /* equal to primary-500 */
+
+    --primary: #9d24a1;
     --primary-50: #f9e6f7;
     --primary-100: #f3ccf0;
     --primary-200: #e699e1;
@@ -275,17 +513,14 @@
     --primary-800: #660066;
     --primary-900: #4d004d;
   }
-  /* Background layers: full viewport, stacked. These layers provide a subtle,
-     animated backdrop. Colors use the app theme variables so users can override
-     them from custom CSS in Settings (for example: --primary, --secondary, etc.).
-     Each layer is pointer-events:none so it won't intercept interactions. */
+
   #lt-bg {
     position: fixed;
     inset: 0;
-    width: 100vw;
-    height: 100vh;
-    z-index: 0; /* behind the app content */
-    pointer-events: none; /* never block UI interactions */
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    pointer-events: none;
     overflow: hidden;
   }
 
@@ -295,38 +530,25 @@
     width: 100%;
     height: 100%;
     pointer-events: none;
-    /* Force GPU compositing for cheaper animations */
     transform: translateZ(0);
     backface-visibility: hidden;
-    /* Isolate layer to prevent repaints of other content */
-    isolation: isolate;
-    /* Hint browser this won't change dimensions */
-    contain: layout style paint;
   }
 
-  /* Animated soft gradient (layer 1 + subtle sheen). Uses CSS variables for colors.
-     Optimized: use transform instead of background-position for GPU acceleration */
   .lt-bg-layer-1 {
     z-index: 1;
-    /* Static gradient - we'll animate via transform instead */
     background: linear-gradient(
       115deg,
-      var(--primary-800, var(--primary, #07101a)) 0%,
-      var(--secondary-800, var(--secondary, #08303f)) 35%,
-      var(--tertiary-800, var(--tertiary, #00373a)) 65%,
-      var(--quaternary-800, var(--quaternary, #050819)) 100%
+      var(--primary-800) 0%,
+      var(--secondary-800) 35%,
+      var(--tertiary-800) 65%,
+      var(--quaternary-800) 100%
     );
-    /* Larger background for smooth transform animation */
     background-size: 400% 400%;
     background-position: center;
-    /* Reduced blur for MUCH better performance - customizable via CSS variable */
-    filter: blur(var(--bg-blur, 24px)) saturate(0.85) brightness(0.7);
+    filter: blur(24px) saturate(0.85) brightness(0.7);
     opacity: 0.28;
-    /* Animate transform instead of background-position - MUCH faster */
-    /* animation: lt-scale-rotate 90s ease-in-out infinite; */
   }
 
-  /* Simplified overlay - reduced filter complexity */
   .lt-bg-layer-2 {
     z-index: 2;
     background: linear-gradient(
@@ -336,11 +558,8 @@
     );
     mix-blend-mode: overlay;
     opacity: 0.3;
-    /* Simple slow rotation - very cheap */
-    /* animation: lt-slow-rotate 120s linear infinite; */
   }
 
-  /* Simplified dots - single gradient instead of multiple */
   .lt-bg-layer-3 {
     z-index: 3;
     background: radial-gradient(
@@ -350,11 +569,8 @@
     );
     background-size: 200% 200%;
     opacity: 0.2;
-    /* Gentle drift - GPU accelerated */
-    /* animation: lt-drift-simple 100s ease-in-out infinite; */
   }
 
-  /* Simplified depth layer - minimal blur */
   .lt-bg-layer-4 {
     z-index: 4;
     background: radial-gradient(
@@ -364,11 +580,8 @@
     );
     background-size: 150% 150%;
     opacity: 0.18;
-    /* Very slow subtle movement */
-    /* animation: lt-drift-simple 140s ease-in-out infinite reverse; */
   }
 
-  /* Static vignette - no animation needed, saves CPU/GPU */
   .lt-bg-layer-5 {
     z-index: 5;
     background: radial-gradient(
@@ -376,220 +589,288 @@
       rgba(0, 0, 0, 0.1) 0%,
       rgba(0, 0, 0, 0.5) 100%
     );
-    pointer-events: none;
     opacity: 0.5;
-    /* Static - no animation, no filters */
   }
 
-  /* Optimized animations - use ONLY transform and opacity (GPU accelerated) */
-
-  /* Gentle scale and rotate - much cheaper than background-position */
   @keyframes lt-scale-rotate {
     0% {
       transform: translateZ(0) scale(1) rotate(0deg);
     }
+
     50% {
       transform: translateZ(0) scale(1.05) rotate(2deg);
     }
+
     100% {
       transform: translateZ(0) scale(1) rotate(0deg);
     }
   }
 
-  /* Simple rotation for overlay */
   @keyframes lt-slow-rotate {
     0% {
       transform: translateZ(0) rotate(0deg);
     }
+
     100% {
       transform: translateZ(0) rotate(360deg);
     }
   }
 
-  /* Simplified drift using only transform */
   @keyframes lt-drift-simple {
     0% {
       transform: translate3d(0, 0, 0);
     }
+
     50% {
       transform: translate3d(2%, 1.5%, 0);
     }
+
     100% {
       transform: translate3d(0, 0, 0);
     }
   }
 
-  /* Pause / reduce animations and heavy transforms when user requests reduced motion
-     or when device appears to be on battery power. */
   @media (prefers-reduced-motion: reduce) {
-    .lt-bg-layer,
-    #lt-bg.no-anim {
+    .lt-bg-layer {
       animation: none !important;
       transform: none !important;
+    }
+
+    .sidebar {
+      transition: none !important;
     }
   }
 
   #lt-bg.no-anim .lt-bg-layer {
     animation: none !important;
     transform: none !important;
-    opacity: 0.6;
   }
 
-  /* App content sits above the background layers. Use a positive z-index so overlays
-     (like Settings) still appear above. */
+  #lt-bg.no-anim .lt-bg-layer-1 {
+    filter: none;
+  }
+
   .page-main {
     position: relative;
     z-index: 10;
-    width: 100vw;
+    width: 100%;
     height: 100vh;
-    max-width: 100vw;
-    max-height: 100vh;
+    height: 100dvh;
+    max-width: 100%;
+    max-height: 100%;
     display: flex;
     flex-direction: row;
     gap: 2rem;
     align-items: stretch;
-    padding: 3rem 3.5rem; /* ensure settings button doesn't overlap content behind it */
+    padding: 3rem 3.5rem;
     overflow: hidden;
+    box-sizing: border-box;
   }
 
   .sidebar {
-    min-width: 18vw;
+    flex: 0 1 18vw;
+    min-width: 0;
     max-width: 18vw;
-    min-height: calc(100vh - 6rem);
+    min-height: 0;
     max-height: 100%;
     display: flex;
     flex-direction: column;
     justify-content: flex-start;
-    background: var(--container, #888888);
+    background: var(--container);
     padding: 1rem;
-    border-radius: var(--border-radius, 0.5rem);
+    border-radius: var(--border-radius);
     overflow: auto;
-    /* Performance: allow browser to skip rendering off-screen content */
+    overscroll-behavior: contain;
     content-visibility: auto;
-    contain-intrinsic-size: 18vw 600px;
+    contain-intrinsic-size: auto 600px;
+    box-sizing: border-box;
   }
 
-  /* Collapsible behavior for narrower screens: make sidebars overlay when collapsed state is false */
   .sidebar.collapsed {
     display: none;
-  }
-
-  /* Overlay variant when narrow: absolute positioned sidebars that slide over center column */
-  @media (max-width: 1699px) {
-    .page-main {
-      padding: 1.25rem;
-      gap: 1rem;
-    }
-    .sidebar {
-      position: absolute;
-      top: 1.25rem;
-      bottom: 1.25rem;
-      width: min(68vw, 360px);
-      z-index: 20;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-      transform: translateX(0);
-      transition:
-        transform 220ms ease,
-        opacity 200ms ease;
-      border-radius: 0.5rem;
-      background: var(--container, rgba(20, 20, 20, 0.92));
-    }
-    .sidebar.left {
-      left: 1.25rem;
-    }
-    .sidebar.right {
-      right: 1.25rem;
-    }
-
-    /* When collapsed hide via transform or display: none (class controls it) */
-    .sidebar:not(.collapsed) {
-      display: flex;
-    }
-
-    /* Toggle bars: thin vertical bars centered vertically on page edges */
-    .sidebar-toggle {
-      position: fixed;
-      z-index: 30;
-      width: 14px;
-      height: 120px;
-      background: linear-gradient(
-        180deg,
-        rgba(255, 255, 255, 0.002),
-        rgba(255, 255, 255, 0.001)
-      );
-      border-radius: 999px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
-      backdrop-filter: blur(6px) saturate(1.1);
-      cursor: pointer;
-      padding: 0.25rem;
-      border: 1px solid rgba(255, 255, 255, 0.0004);
-    }
-    .sidebar-toggle.left {
-      left: 6px;
-      top: 50%;
-      transform: translateY(-50%);
-    }
-    .sidebar-toggle.right {
-      right: 6px;
-      top: 50%;
-      transform: translateY(-50%);
-    }
-    .sidebar-toggle .fa {
-      font-size: 0.8rem;
-    }
-    .sidebar-toggle .fa:before {
-      display: block;
-    }
-  }
-
-  /* On wide screens ensure sidebars are visible and static */
-  @media (min-width: 1700px) {
-    .sidebar {
-      position: relative;
-      display: flex !important;
-      width: auto;
-      box-shadow: none;
-    }
-    .sidebar-toggle {
-      display: none !important;
-    }
-  }
-
-  /* Constrain central column width so pinned + search don't stretch too wide */
-  .center-column {
-    max-width: 60vw;
-    margin: 0 auto;
   }
 
   .sidebar.left {
     order: 0;
     border: 1px solid var(--dark-400);
   }
-  .center-column {
-    order: 1;
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 1.5rem;
-  }
+
   .sidebar.right {
     order: 2;
     border: 1px solid var(--dark-400);
   }
 
-  .search-wrap {
-    width: 100%;
+  .center-column {
+    order: 1;
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 60vw;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+    box-sizing: border-box;
   }
-  .system-wrap {
-    width: 100%;
+
+  .center-column.center-content {
+    justify-content: center;
   }
+
+  .search-wrap,
+  .system-wrap,
   .pinned-wrap {
     width: 100%;
+    min-width: 0;
+  }
+
+  .pinned-wrap {
     border: 1px solid var(--dark-400);
-    border-radius: var(--border-radius, 0.5rem);
+    border-radius: var(--border-radius);
+  }
+
+  .sidebar-toggle {
+    display: none;
+  }
+
+  .compact-overflow-controls {
+    display: none;
+  }
+
+  .center-overlay {
+    position: fixed;
+    top: 3.25rem;
+    left: 50%;
+    z-index: 40;
+    width: min(900px, calc(100vw - 2.5rem));
+    height: calc(100dvh - 4.5rem);
+    box-sizing: border-box;
+    padding: 1rem;
+    overflow: auto;
+    transform: translateX(-50%);
+    border: 1px solid var(--dark-400);
+    border-radius: var(--border-radius);
+    background: var(--container);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  }
+
+  .settings-load-error {
+    position: fixed;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 100;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    background: var(--container);
+    color: var(--text);
+  }
+
+  .settings-load-error button {
+    margin-left: 0.5rem;
+    cursor: pointer;
+  }
+
+  @media (max-width: 1699px) {
+    .page-main {
+      padding: 1.25rem;
+      gap: 1rem;
+    }
+
+    .center-column {
+      width: min(100%, 900px);
+      min-width: min(560px, calc(100vw - 2.5rem));
+      flex: 0 1 900px;
+      max-width: none;
+      padding-top: 2.75rem;
+    }
+
+    .sidebar {
+      position: absolute;
+      top: 1.25rem;
+      bottom: 1.25rem;
+      width: min(68vw, 360px);
+      max-width: calc(100vw - 2.5rem);
+      min-width: 0;
+      z-index: 20;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      transition:
+        opacity 200ms ease,
+        transform 220ms ease;
+      border-radius: 0.5rem;
+      background: var(--container);
+    }
+
+    .sidebar.left {
+      left: 1.25rem;
+    }
+
+    .sidebar.right {
+      right: 1.25rem;
+    }
+
+    .sidebar-toggle {
+      display: none;
+    }
+
+    .compact-overflow-controls {
+      position: fixed;
+      z-index: 30;
+      top: 0.75rem;
+      right: 3.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.25rem;
+    }
+
+    .compact-toggle {
+      width: 2rem;
+      height: 2rem;
+      padding: 0;
+      border: none;
+      border-radius: 0;
+      background: none;
+      color: inherit;
+      cursor: pointer;
+      opacity: 0.72;
+    }
+
+    .compact-toggle.active,
+    .compact-toggle:hover {
+      opacity: 1;
+    }
+
+    .compact-toggle:focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 3px;
+    }
+
+    .compact-toggle .fa {
+      font-size: 1.25rem;
+    }
+
+    .compact-toggle .fa::before {
+      display: block;
+    }
+  }
+
+  @media (min-width: 1700px) {
+    .center-overlay {
+      top: 3.5rem;
+      height: calc(100dvh - 5rem);
+    }
+  }
+
+  @media (min-width: 1700px) {
+    .sidebar {
+      position: relative;
+      flex: 0 1 18vw;
+      max-width: 18vw;
+      box-shadow: none;
+    }
+
+    .sidebar-toggle {
+      display: none !important;
+    }
   }
 </style>

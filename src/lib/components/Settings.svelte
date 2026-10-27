@@ -76,7 +76,10 @@ It will also provide a reset, import, and export functionality for user settings
 
   // Custom css textarea (stored inside settings.customCss)
   let cssText = $state("");
-  settings.subscribe((v) => (cssText = v.customCss || ""));
+  settings.subscribe((v) => {
+    cssText = v.customCss || "";
+    installCustomCss(cssText);
+  });
 
   // Pinned site adder fields (managed here in Settings)
   let newTitle = $state("");
@@ -303,6 +306,14 @@ It will also provide a reset, import, and export functionality for user settings
 
   function applyCss() {
     if (!browser) return;
+    installCustomCss(cssText);
+    setCustomCss(cssText || "");
+    // small visual feedback
+    showSettings = false;
+  }
+
+  function installCustomCss(css: string) {
+    if (!browser) return;
     const styleId = "lt-custom-css";
     let el = document.getElementById(styleId) as HTMLStyleElement | null;
     if (!el) {
@@ -310,10 +321,7 @@ It will also provide a reset, import, and export functionality for user settings
       el.id = styleId;
       document.head.appendChild(el);
     }
-    el.textContent = cssText || "";
-    setCustomCss(cssText || "");
-    // small visual feedback
-    showSettings = false;
+    el.textContent = css || "";
   }
 
   function exportSettings() {
@@ -892,7 +900,7 @@ It will also provide a reset, import, and export functionality for user settings
     left: 2.5rem;
     width: calc(100vw - 5rem);
     height: calc(100vh - 5rem);
-    background-color: var(--container, rgba(0, 0, 0, 0.92));
+    background-color: var(--container);
     color: white;
     padding: 1.25rem;
     border-radius: 0.5rem;

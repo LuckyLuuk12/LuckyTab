@@ -862,9 +862,9 @@ Users can reorder rows via drag-and-drop; order persists via settings.
   .system-info-card {
     position: relative;
     width: 100%;
-    border: 1px solid var(--dark-400, rgba(0, 0, 0, 0.2));
-    border-radius: var(--border-radius, 0.5rem);
-    background: var(--container, rgba(0, 0, 0, 0.2));
+    border: 1px solid var(--dark-400);
+    border-radius: var(--border-radius);
+    background: var(--container);
     padding: 0.85rem 0.95rem;
     box-sizing: border-box;
   }

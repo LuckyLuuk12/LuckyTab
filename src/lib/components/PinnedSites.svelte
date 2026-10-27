@@ -45,6 +45,7 @@ no description yet
 
 <style>
   section {
+    background: var(--container);
     border-radius: var(--border-radius);
   }
   h3 {
