@@ -62,7 +62,7 @@
       orderedProviders[0],
   );
   // Autocomplete suggestions
-  type SuggestionKind = "history" | "math" | "command";
+  type SuggestionKind = "history" | "math" | "command" | "currency";
   type Suggestion = {
     kind: SuggestionKind;
     url: string;
@@ -79,6 +79,30 @@
     { prefix: "aks", providerId: "allkeyshop", label: "AllKeyShop" },
     { prefix: "wiki", providerId: "wiki", label: "Wikipedia" },
   ] as const;
+  type CurrencyConversion = {
+    amount: number;
+    from: string;
+    to: string;
+  };
+  type ExchangeRate = {
+    rate: number;
+    date: string;
+    expiresAt: number;
+  };
+  const currencySymbolToCode: Record<string, string> = {
+    "€": "EUR",
+    $: "USD",
+    "£": "GBP",
+    C$: "CAD",
+    CA$: "CAD",
+    A$: "AUD",
+    AU$: "AUD",
+    NZ$: "NZD",
+  };
+  const EXCHANGE_RATE_CACHE_TTL = 24 * 60 * 60 * 1000;
+  const exchangeRateCache = new Map<string, ExchangeRate>();
+  let currencyPreviewVersion = 0;
+  let currencyPreviewTimeout: ReturnType<typeof setTimeout> | undefined;
   type HistorySelectDetail = {
     type: HistoryEntry["type"];
     query?: string;
@@ -212,6 +236,127 @@
     const prefix = input.trimStart().toLowerCase();
     if (!prefix || prefix.includes(" ")) return null;
     return searchCommands.find((command) => command.prefix.startsWith(prefix));
+  }
+  function parseCurrencyCommand(input: string): CurrencyConversion | null {
+    const match = input
+      .trim()
+      .match(
+        /^(C\$|CA\$|A\$|AU\$|NZ\$|€|£|\$)\s*(\d+(?:[.,]\d+)?)\s*(C\$|CA\$|A\$|AU\$|NZ\$|€|£|\$)?$/i,
+      );
+    if (!match) return null;
+
+    const fromSymbol = match[1].toUpperCase();
+    const amount = Number(match[2].replace(",", "."));
+    const from = currencySymbolToCode[fromSymbol];
+    const toSymbol = match[3]?.toUpperCase();
+    const fromCode = from;
+    const to = toSymbol
+      ? currencySymbolToCode[toSymbol]
+      : fromCode === "EUR"
+        ? "USD"
+        : "EUR";
+
+    if (!Number.isFinite(amount) || amount < 0 || !from || !to) return null;
+    return { amount, from, to };
+  }
+
+  function formatCurrency(amount: number, currency: string): string {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  }
+
+  async function getExchangeRate(
+    from: string,
+    to: string,
+  ): Promise<ExchangeRate> {
+    if (from === to) {
+      return {
+        rate: 1,
+        date: new Date().toISOString().slice(0, 10),
+        expiresAt: Date.now() + EXCHANGE_RATE_CACHE_TTL,
+      };
+    }
+
+    const cacheKey = `${from}:${to}`;
+    const cached = exchangeRateCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached;
+
+    try {
+      const response = await fetch(
+        `https://api.frankfurter.dev/v1/latest?base=${encodeURIComponent(from)}&symbols=${encodeURIComponent(to)}`,
+        { signal: AbortSignal.timeout(5000) },
+      );
+      if (!response.ok) {
+        throw new Error(`Exchange rate request failed (${response.status})`);
+      }
+
+      const data = (await response.json()) as {
+        date: string;
+        rates: Record<string, number>;
+      };
+      const rate = data.rates?.[to];
+      if (typeof rate !== "number" || !Number.isFinite(rate)) {
+        throw new Error(`No exchange rate available for ${from}/${to}`);
+      }
+
+      const result = {
+        rate,
+        date: data.date,
+        expiresAt: Date.now() + EXCHANGE_RATE_CACHE_TTL,
+      };
+      exchangeRateCache.set(cacheKey, result);
+      return result;
+    } catch (error) {
+      // If the API is temporarily unavailable, use a previously cached rate if possible.
+      if (cached) return cached;
+      throw error;
+    }
+  }
+
+  async function resolveCurrencySuggestion(
+    input: string,
+    conversion: CurrencyConversion,
+    version: number,
+  ) {
+    try {
+      const exchange = await getExchangeRate(conversion.from, conversion.to);
+      if (
+        version !== currencyPreviewVersion ||
+        query.trim() !== input ||
+        allSuggestions[0]?.kind !== "currency"
+      ) {
+        return;
+      }
+
+      const converted = conversion.amount * exchange.rate;
+      const resultText = `${formatCurrency(conversion.amount, conversion.from)} = ${formatCurrency(converted, conversion.to)}`;
+      allSuggestions = [
+        {
+          kind: "math",
+          url: input,
+          query: input,
+          displayText: resultText,
+          count: 0,
+          mathResult: resultText,
+        },
+      ];
+      syncVisibleSuggestions();
+    } catch {
+      if (version !== currencyPreviewVersion || query.trim() !== input) return;
+      allSuggestions = [
+        {
+          kind: "currency",
+          url: input,
+          query: input,
+          displayText: "Currency conversion unavailable",
+          count: 0,
+        },
+      ];
+      syncVisibleSuggestions();
+    }
   }
   function isLikelyURI(s: string) {
     const t = s.trim();
@@ -435,6 +580,8 @@
     const effectiveInput = command ? command.query : input;
     const trimmedInput = effectiveInput.trim();
     if (!trimmedInput) {
+      currencyPreviewVersion++;
+      if (currencyPreviewTimeout) clearTimeout(currencyPreviewTimeout);
       allSuggestions = [];
       loadedStartIndex = 0;
       loadedSuggestionCount = 0;
@@ -443,6 +590,37 @@
       selectedSuggestionIndex = -1;
       return;
     }
+    const currencyConversion = parseCurrencyCommand(trimmedInput);
+    if (currencyConversion) {
+      currencyPreviewVersion++;
+      const version = currencyPreviewVersion;
+      if (currencyPreviewTimeout) clearTimeout(currencyPreviewTimeout);
+      allSuggestions = [
+        {
+          kind: "currency",
+          url: trimmedInput,
+          query: trimmedInput,
+          displayText: "Converting currency...",
+          count: 0,
+        },
+      ];
+      loadedStartIndex = 0;
+      loadedSuggestionCount = 1;
+      syncVisibleSuggestions();
+      selectedSuggestionIndex = -1;
+      currencyPreviewTimeout = setTimeout(() => {
+        void resolveCurrencySuggestion(
+          trimmedInput,
+          currencyConversion,
+          version,
+        );
+      }, 250);
+      return;
+    }
+
+    currencyPreviewVersion++;
+    if (currencyPreviewTimeout) clearTimeout(currencyPreviewTimeout);
+
     const inputLower = trimmedInput.toLowerCase();
     const localSuggestions: Suggestion[] = [];
     if (commandPrefix) {
@@ -578,7 +756,7 @@
     updateSuggestions(query);
   }
   async function selectSuggestion(suggestion: Suggestion) {
-    if (suggestion.kind === "math") {
+    if (suggestion.kind === "math" || suggestion.kind === "currency") {
       if (suggestion.mathResult) {
         await copyToClipboard(suggestion.mathResult);
       }
@@ -810,6 +988,37 @@
   }
   async function submitForm(e: Event) {
     e.preventDefault();
+
+    const currencyConversion = parseCurrencyCommand(query);
+    if (currencyConversion) {
+      try {
+        const exchange = await getExchangeRate(
+          currencyConversion.from,
+          currencyConversion.to,
+        );
+        const converted = currencyConversion.amount * exchange.rate;
+        const resultText = `${formatCurrency(currencyConversion.amount, currencyConversion.from)} = ${formatCurrency(converted, currencyConversion.to)}`;
+        query = resultText;
+        clearSuggestions();
+      } catch {
+        allSuggestions = [
+          {
+            kind: "currency",
+            url: query,
+            query,
+            displayText:
+              "Currency conversion failed. Check your connection and try again.",
+            count: 0,
+          },
+        ];
+        loadedStartIndex = 0;
+        loadedSuggestionCount = 1;
+        syncVisibleSuggestions();
+        suggestionsVisible = true;
+      }
+      return;
+    }
+
     const command = parseSearchCommand(query);
     const q = command ? command.query : query;
     if (command?.providerId === "wiki") {
@@ -1012,6 +1221,7 @@
   </div>
   <div class="search-help" role="tooltip">
     <strong>Quick actions</strong>
+    <span><kbd>$/€</kbd> Currency</span>
     <span><kbd>yt</kbd> YouTube</span>
     <span><kbd>maps</kbd> Maps</span>
     <span><kbd>aks</kbd> AllKeyShop</span>
